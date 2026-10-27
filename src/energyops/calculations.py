@@ -37,22 +37,21 @@ def kw_to_kwh(power_kw: float, interval_minutes: int) -> float:
     return power_kw * interval_minutes / 60
 
 
-def daily_energy_kwh(readings: Sequence[MeterReading]) -> list[DailyEnergy]:
-    """Total energy per UTC day for the readings of one meter, oldest day first.
+def validate_readings(readings: Sequence[MeterReading]) -> int:
+    """Check that readings from one meter can be trusted, and return their interval in minutes.
 
-    A reading belongs to the day its interval starts in. Intervals must not cross midnight,
-    timestamps must not repeat, and all readings must share one meter and one interval length.
+    Raises EnergyDataError for no readings, more than one meter or interval length, an interval
+    that does not divide a day, non-UTC or off-boundary timestamps, duplicate timestamps and
+    power values that are not finite numbers.
     """
     if not readings:
-        return []
-
+        raise EnergyDataError("no readings")
     meter_id = readings[0].meter_id
     interval = readings[0].interval_minutes
     if interval <= 0 or MINUTES_PER_DAY % interval != 0:
         raise EnergyDataError("interval_minutes must divide 1440 evenly")
 
     seen: set[datetime] = set()
-    per_day: dict[date, list[float]] = {}
     for reading in readings:
         if reading.meter_id != meter_id:
             raise EnergyDataError("readings come from more than one meter")
@@ -66,6 +65,23 @@ def daily_energy_kwh(readings: Sequence[MeterReading]) -> list[DailyEnergy]:
         minute = reading.timestamp.hour * 60 + reading.timestamp.minute
         if reading.timestamp.second or minute % interval:
             raise EnergyDataError("timestamp is not on an interval boundary")
+        if not math.isfinite(reading.power_kw):
+            raise EnergyDataError("power_kw must be a finite number")
+    return interval
+
+
+def daily_energy_kwh(readings: Sequence[MeterReading]) -> list[DailyEnergy]:
+    """Total energy per UTC day for the readings of one meter, oldest day first.
+
+    A reading belongs to the day its interval starts in. See `validate_readings` for what is
+    rejected. An empty list gives no days.
+    """
+    if not readings:
+        return []
+    interval = validate_readings(readings)
+
+    per_day: dict[date, list[float]] = {}
+    for reading in readings:
         per_day.setdefault(reading.timestamp.date(), []).append(
             kw_to_kwh(reading.power_kw, interval)
         )
@@ -80,3 +96,40 @@ def daily_energy_kwh(readings: Sequence[MeterReading]) -> list[DailyEnergy]:
         )
         for day, values in sorted(per_day.items())
     ]
+
+
+@dataclass(frozen=True, slots=True)
+class DemandPoint:
+    """A power level (kW, a rate) and the start of the interval it was recorded in."""
+
+    power_kw: float
+    timestamp: datetime
+
+
+def peak_demand(readings: Sequence[MeterReading]) -> DemandPoint:
+    """The highest average power in any interval. The earliest interval wins a tie."""
+    validate_readings(readings)
+    best = max(readings, key=lambda r: (r.power_kw, -r.timestamp.timestamp()))
+    return DemandPoint(best.power_kw, best.timestamp)
+
+
+def lowest_demand(readings: Sequence[MeterReading]) -> DemandPoint:
+    """The lowest average power in any interval. The earliest interval wins a tie."""
+    validate_readings(readings)
+    best = min(readings, key=lambda r: (r.power_kw, r.timestamp.timestamp()))
+    return DemandPoint(best.power_kw, best.timestamp)
+
+
+def average_daily_kwh(days: Sequence[DailyEnergy], *, weekend: bool | None = None) -> float | None:
+    """Mean energy per day over complete days only, or None if there are none.
+
+    `weekend=True` keeps Saturdays and Sundays, `weekend=False` keeps Monday to Friday, and
+    `None` keeps every complete day. Partial days are skipped because they would pull the
+    average down.
+    """
+    chosen = [
+        d.energy_kwh
+        for d in days
+        if d.complete and (weekend is None or (d.day.weekday() >= 5) == weekend)
+    ]
+    return math.fsum(chosen) / len(chosen) if chosen else None
