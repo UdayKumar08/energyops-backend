@@ -1,0 +1,38 @@
+# Secrets and local configuration. Only the example file is tracked.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Node (for tooling that lands here later)
+node_modules/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+
+# Editors and operating systems
+.idea/
+.vscode/*
+!.vscode/settings.json
+.DS_Store
+Thumbs.db
