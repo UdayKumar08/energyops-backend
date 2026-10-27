@@ -26,3 +26,5 @@ and in Azure Key Vault in the cloud.
 ## Documentation
 
 See [docs/architecture.md](docs/architecture.md) for the planned structure and the reasons behind it.
+
+See [docs/backlog.md](docs/backlog.md) for what is planned next and how each item is judged done.
