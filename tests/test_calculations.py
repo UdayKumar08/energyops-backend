@@ -93,3 +93,49 @@ def test_generated_data_totals_match_a_hand_sum() -> None:
 def test_untrustworthy_readings_are_rejected(bad: list[MeterReading]) -> None:
     with pytest.raises(EnergyDataError):
         daily_energy_kwh(bad)
+
+
+# ------------------------------------------------------------------ demand and averages
+
+
+def test_peak_and_lowest_demand_with_earliest_winning_ties() -> None:
+    from energyops.calculations import lowest_demand, peak_demand
+
+    readings = [
+        reading(0, 5.0),
+        reading(15, 9.0),
+        reading(30, 2.0),
+        reading(45, 9.0),
+        reading(60, 2.0),
+    ]
+    peak, low = peak_demand(readings), lowest_demand(readings)
+    assert (peak.power_kw, peak.timestamp) == (9.0, START + timedelta(minutes=15))
+    assert (low.power_kw, low.timestamp) == (2.0, START + timedelta(minutes=30))
+
+
+def test_peak_and_lowest_demand_reject_bad_input() -> None:
+    from energyops.calculations import lowest_demand, peak_demand
+
+    for fn in (peak_demand, lowest_demand):
+        with pytest.raises(EnergyDataError):
+            fn([])
+        with pytest.raises(EnergyDataError):
+            fn([reading(0, 1.0), reading(0, 2.0)])
+        with pytest.raises(EnergyDataError):
+            fn([reading(0, float("nan"))])
+
+
+def test_average_daily_kwh_uses_complete_days_and_splits_weekdays_from_weekends() -> None:
+    from energyops.calculations import DailyEnergy, average_daily_kwh
+
+    days = [
+        DailyEnergy(date(2026, 3, 2), 100.0, 96, True),  # Monday
+        DailyEnergy(date(2026, 3, 3), 200.0, 96, True),  # Tuesday
+        DailyEnergy(date(2026, 3, 7), 40.0, 96, True),  # Saturday
+        DailyEnergy(date(2026, 3, 8), 999.0, 50, False),  # Sunday, partial: ignored
+    ]
+    assert average_daily_kwh(days) == pytest.approx((100 + 200 + 40) / 3)
+    assert average_daily_kwh(days, weekend=False) == pytest.approx(150.0)
+    assert average_daily_kwh(days, weekend=True) == pytest.approx(40.0)
+    assert average_daily_kwh([DailyEnergy(date(2026, 3, 8), 1.0, 5, False)]) is None
+    assert average_daily_kwh([]) is None
