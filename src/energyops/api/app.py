@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, RedirectResponse
@@ -18,6 +18,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from energyops.agents.energy_analyst import ENERGY_ANALYST_SPEC, AnalystRequest, EnergyAnalyst
 from energyops.agents.energy_analyst_evals import good_reply
+from energyops.agents.fact_sources import DirectFactSheets, McpFactSheets, McpTarget
 from energyops.agents.runs import RunRecord, RunStatus
 from energyops.agents.sources import ReadingsSource, synthetic_demo_source
 from energyops.agents.spec import AgentSpec, load_prompt, unimplemented_guardrails
@@ -93,6 +94,8 @@ class RunRequest(BaseModel):
     question: str = Field(min_length=1, max_length=500)
     site: str | None = Field(default=None, max_length=64)
     provider: ProviderId = "test"
+    # "mcp": the agent calls the read-only energy MCP server (a subprocess). "direct": plain Python.
+    data_access: Literal["mcp", "direct"] = "mcp"
     model: str | None = Field(default=None, min_length=1, max_length=100)
 
 
@@ -147,6 +150,7 @@ def create_app(
     keys: ProviderKeys | None = None,
     source: ReadingsSource | None = None,
     store: RunStore | None = None,
+    mcp_target: McpTarget | None = None,
     client_factory: ClientFactory = make_client,
 ) -> FastAPI:
     chosen = settings or ApiSettings()
@@ -156,6 +160,11 @@ def create_app(
             f"not '{chosen.environment.value}'."
         )
     readings = source or synthetic_demo_source()
+    if mcp_target is None and source is not None:
+        # A custom data source must reach the MCP path too, so serve it from an in-process server.
+        from energyops.mcp_servers.energy import create_server
+
+        mcp_target = create_server(source=source)
     runs = store or RunStore()
     provider_keys = keys
 
@@ -224,7 +233,12 @@ def create_app(
             client = client_factory(body.provider, body.model, current_keys(), test_reply)
         except ProviderUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from None
-        record = await EnergyAnalyst(spec, client, readings).run(
+        facts = (
+            McpFactSheets(spec, mcp_target)
+            if body.data_access == "mcp"
+            else DirectFactSheets(readings)
+        )
+        record = await EnergyAnalyst(spec, client, facts).run(
             AnalystRequest(question=body.question, site=body.site)
         )
         runs.add(record)

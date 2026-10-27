@@ -63,6 +63,11 @@ function chips(values) {
   return values.map((value) => el("span", { class: "chip", text: value }));
 }
 
+function dataPath(record) {
+  const step = record.steps.find((s) => s.name === "fact_sheet");
+  return step && step.data.via ? step.data.via : "unknown";
+}
+
 function seconds(record) {
   return (new Date(record.finished_at) - new Date(record.started_at)) / 1000;
 }
@@ -205,7 +210,7 @@ function showRecord(record) {
   $("meta").textContent =
     `${record.model_provider} / ${record.model_name} · ${record.attempts} attempt(s) · ` +
     `${usage.input_tokens} in / ${usage.output_tokens} out tokens${usage.estimated ? " (estimated)" : ""} · ` +
-    `${seconds(record).toFixed(1)} s · prompt ${record.prompt_version} · run ${record.run_id.slice(0, 8)}`;
+    `${seconds(record).toFixed(1)} s · prompt ${record.prompt_version} · data via ${dataPath(record)} · run ${record.run_id.slice(0, 8)}`;
 
   const blob = new Blob([JSON.stringify(record, null, 2)], { type: "application/json" });
   if ($("download").dataset.url) URL.revokeObjectURL($("download").dataset.url);
@@ -273,7 +278,7 @@ async function runAgent() {
     status.textContent = "Type a question first.";
     return;
   }
-  const body = { question, provider: $("provider").value };
+  const body = { question, provider: $("provider").value, data_access: $("access").value };
   if ($("model").value.trim()) body.model = $("model").value.trim();
   if ($("site").value.trim()) body.site = $("site").value.trim();
 

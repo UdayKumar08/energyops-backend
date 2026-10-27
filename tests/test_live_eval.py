@@ -121,13 +121,19 @@ def test_save_is_announced_and_never_contains_a_key(tmp_path, capsys) -> None:
 def test_main_accepts_save_and_passes_it_on(monkeypatch, tmp_path) -> None:
     seen = {}
 
-    async def fake_run(provider, model, show, client=None, save=None):
-        seen.update(provider=provider, model=model, show=show, save=save)
+    async def fake_run(provider, model, show, client=None, save=None, via="direct"):
+        seen.update(provider=provider, model=model, show=show, save=save, via=via)
         return 0
 
     monkeypatch.setattr(live_eval, "run", fake_run)
     target = tmp_path / "out.json"
     with pytest.raises(SystemExit) as exit_info:
-        live_eval.main(["nebius", "some-model", "--show", "--save", str(target)])
+        live_eval.main(["nebius", "some-model", "--show", "--save", str(target), "--via", "mcp"])
     assert exit_info.value.code == 0
-    assert seen == {"provider": "nebius", "model": "some-model", "show": True, "save": target}
+    assert seen == {
+        "provider": "nebius",
+        "model": "some-model",
+        "show": True,
+        "save": target,
+        "via": "mcp",
+    }

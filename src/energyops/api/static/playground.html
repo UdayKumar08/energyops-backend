@@ -47,6 +47,13 @@
       </div>
       <p class="muted small" id="provider-note"></p>
       <div class="row">
+        <label for="access">Data access</label>
+        <select id="access">
+          <option value="mcp">MCP tool (the agent calls the read-only energy server)</option>
+          <option value="direct">Direct Python (no tool call, for comparison)</option>
+        </select>
+      </div>
+      <div class="row">
         <label for="model">Exact model name <span class="muted">(optional)</span></label>
         <input id="model" type="text" maxlength="100" autocomplete="off" spellcheck="false">
       </div>

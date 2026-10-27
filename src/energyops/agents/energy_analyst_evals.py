@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from energyops.agents.energy_analyst import ENERGY_ANALYST_SPEC, AnalystRequest, EnergyAnalyst
+from energyops.agents.fact_sources import DirectFactSheets
 from energyops.agents.runs import RunRecord, RunStatus
 from energyops.agents.sources import synthetic_demo_source
 from energyops.facts import FactSheet, build_fact_sheet
@@ -132,7 +133,9 @@ async def run_scripted(case: EvalCase) -> tuple[bool, RunRecord]:
     """Play one case through the test adapter and say whether the agent behaved as expected."""
     source = synthetic_demo_source()
     sheet = build_fact_sheet(source(None))
-    agent = EnergyAnalyst(ENERGY_ANALYST_SPEC, TestAdapter(replies=case.replies(sheet)), source)
+    agent = EnergyAnalyst(
+        ENERGY_ANALYST_SPEC, TestAdapter(replies=case.replies(sheet)), DirectFactSheets(source)
+    )
     record = await agent.run(AnalystRequest(question=case.question))
     passed = (
         record.status is case.expected_status

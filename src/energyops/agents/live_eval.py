@@ -1,6 +1,7 @@
 """Run the energy analyst against a real model and report what happened. Run it yourself:
 
-    uv run python -m energyops.agents.live_eval gemini|nebius [model-name] [--show] [--save FILE]
+    uv run python -m energyops.agents.live_eval gemini|nebius [model-name] [--show]
+        [--save FILE] [--via mcp]
 
 It reads the key from your environment or local .env and never prints it. Each question is a
 real call (or two, when the first answer is rejected and sent back), so it uses a little of your
@@ -26,8 +27,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from energyops.agents.energy_analyst import ENERGY_ANALYST_SPEC, AnalystRequest, EnergyAnalyst
+from energyops.agents.fact_sources import DirectFactSheets, FactSheetProvider, McpFactSheets
 from energyops.agents.runs import RunRecord, RunStatus
-from energyops.agents.sources import ReadingsSource, synthetic_demo_source
+from energyops.agents.sources import synthetic_demo_source
 from energyops.models.base import ModelClient
 from energyops.models.credentials import ProviderKeys
 from energyops.models.live_check import build_client
@@ -92,10 +94,12 @@ class CaseResult:
 async def evaluate(
     client: ModelClient,
     cases: Sequence[LiveCase] = LIVE_CASES,
-    source: ReadingsSource | None = None,
+    facts: FactSheetProvider | None = None,
 ) -> list[CaseResult]:
     """Ask every case's question through the analyst, one at a time."""
-    analyst = EnergyAnalyst(ENERGY_ANALYST_SPEC, client, source or synthetic_demo_source())
+    analyst = EnergyAnalyst(
+        ENERGY_ANALYST_SPEC, client, facts or DirectFactSheets(synthetic_demo_source())
+    )
     results = []
     for case in cases:
         record = await analyst.run(AnalystRequest(question=case.question))
@@ -201,9 +205,11 @@ async def run(
     show: bool = False,
     client: ModelClient | None = None,
     save: Path | None = None,
+    via: str = "direct",
 ) -> int:
     chosen = client or build_client(provider, ProviderKeys(), model)
-    results = await evaluate(chosen)
+    facts = McpFactSheets(ENERGY_ANALYST_SPEC) if via == "mcp" else None
+    results = await evaluate(chosen, facts=facts)
     print(format_report(results, show))
     if save is not None:
         save_records(save, results)
@@ -220,8 +226,15 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("model", nargs="?", help="exact model name (default: the provider's)")
     parser.add_argument("--show", action="store_true", help="print each answer, not just results")
     parser.add_argument("--save", type=Path, metavar="FILE", help="write full run records as JSON")
+    parser.add_argument(
+        "--via",
+        choices=("direct", "mcp"),
+        default="direct",
+        help="get the fact sheet by calling Python directly (default) or through the MCP server",
+    )
     args = parser.parse_args(argv)
-    raise SystemExit(asyncio.run(run(args.provider, args.model, args.show, save=args.save)))
+    code = asyncio.run(run(args.provider, args.model, args.show, save=args.save, via=args.via))
+    raise SystemExit(code)
 
 
 if __name__ == "__main__":

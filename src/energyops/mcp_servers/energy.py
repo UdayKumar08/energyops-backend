@@ -27,6 +27,8 @@ from energyops.mcp_servers.schema import FactSheetModel, SiteList
 
 SERVER_NAME = "energyops-energy"
 
+# Expected failures start with one of these codes and a colon, so a client can tell them apart.
+
 # Everything here only reads, never writes, never reaches outside this process's own data.
 READ_ONLY = ToolAnnotations(
     read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
@@ -65,11 +67,15 @@ def create_server(
         return some other site's figures.
         """
         if site not in known:
-            raise ToolError(f"Unknown site {site!r}. Call list_sites to see the valid sites.")
+            raise ToolError(
+                f"unknown_site: Unknown site {site!r}. Call list_sites to see the valid sites."
+            )
         try:
             return FactSheetModel.from_fact_sheet(build_fact_sheet(readings(site)))
         except EnergyDataError as exc:
-            raise ToolError(f"The readings for {site!r} cannot be used: {exc}") from None
+            raise ToolError(
+                f"unusable_data: The readings for {site!r} cannot be used: {exc}"
+            ) from None
 
     return server
 
