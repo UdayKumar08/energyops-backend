@@ -17,9 +17,19 @@ DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest"
 
 # https://docs.tokenfactory.nebius.com/quickstart.md
 NEBIUS_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
+# Picked from a live check of the models a real key could call: an exact, non-reasoning
+# instruct model that answered in under a second. Reasoning models such as
+# nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B returned empty content at a small token limit.
+DEFAULT_NEBIUS_MODEL = "Qwen/Qwen3-30B-A3B-Instruct-2507"
 
 
 def gemini_client(api_key: SecretStr, model: str = DEFAULT_GEMINI_MODEL) -> OpenAICompatibleClient:
     return OpenAICompatibleClient(
         provider="google-gemini", model=model, base_url=GEMINI_BASE_URL, api_key=api_key
+    )
+
+
+def nebius_client(api_key: SecretStr, model: str = DEFAULT_NEBIUS_MODEL) -> OpenAICompatibleClient:
+    return OpenAICompatibleClient(
+        provider="nebius", model=model, base_url=NEBIUS_BASE_URL, api_key=api_key
     )

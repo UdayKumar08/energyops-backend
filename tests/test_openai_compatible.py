@@ -23,9 +23,11 @@ from energyops.models.live_check import build_client
 from energyops.models.openai_compatible import OpenAICompatibleClient
 from energyops.models.providers import (
     DEFAULT_GEMINI_MODEL,
+    DEFAULT_NEBIUS_MODEL,
     GEMINI_BASE_URL,
     NEBIUS_BASE_URL,
     gemini_client,
+    nebius_client,
 )
 
 KEY = "sk-test-NOT-A-REAL-KEY-123"
@@ -275,3 +277,20 @@ def test_live_check_can_override_the_model(monkeypatch: pytest.MonkeyPatch, tmp_
     monkeypatch.setenv("GEMINI_API_KEY", KEY)
     assert build_client("gemini", ProviderKeys()).model == DEFAULT_GEMINI_MODEL
     assert build_client("gemini", ProviderKeys(), "some-other-model").model == "some-other-model"
+
+
+def test_nebius_configuration_and_live_check_wiring(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    client = nebius_client(SecretStr(KEY))
+    assert (client.provider, client.model) == ("nebius", DEFAULT_NEBIUS_MODEL)
+    assert nebius_client(SecretStr(KEY), "other/model").model == "other/model"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("NEBIUS_API_KEY", KEY)
+    assert build_client("nebius", ProviderKeys()).provider == "nebius"
+    assert build_client("nebius", ProviderKeys(), "x/y").model == "x/y"
+    monkeypatch.delenv("NEBIUS_API_KEY")
+    with pytest.raises(SystemExit, match="NEBIUS_API_KEY is not set"):
+        build_client("nebius", ProviderKeys())
+    with pytest.raises(SystemExit, match="Unknown provider"):
+        build_client("nope", ProviderKeys())
