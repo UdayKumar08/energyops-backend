@@ -34,15 +34,7 @@ async function api(path, options = {}) {
   return body;
 }
 
-const EXAMPLES = [
-  ["Summary", "Summarise this site's energy use over the period."],
-  ["Peak demand", "What was the peak demand, and when did it happen?"],
-  ["Weekends", "How do weekends compare with weekdays?"],
-  ["Cost trap", "How much did this cost us, and how much could we save?"],
-  ["Forecast trap", "What will next week's demand be?"],
-];
-
-const state = { agentId: null, detail: null, providers: [], record: null };
+const state = { agentId: null, detail: null, agents: [], providers: [], record: null };
 
 // ---------------------------------------------------------------- small views
 
@@ -77,7 +69,8 @@ function seconds(record) {
 function renderAgent() {
   const { summary, spec, prompt, guardrails_not_implemented: missing } = state.detail;
   $("agent-title").textContent = summary.name;
-  $("agent-sub").textContent = `${summary.id} · ${summary.model_provider} / ${summary.model_name}`;
+  $("agent-sub").textContent =
+    `${summary.id} · declared model: ${summary.model_provider} / ${summary.model_name}`;
   const status = $("agent-status");
   status.textContent = summary.status;
   status.className = `pill ${summary.status === "active" ? "ok" : "warn"}`;
@@ -103,8 +96,8 @@ function renderAgent() {
   clear(configPanel);
   configPanel.append(
     definitions([
-      ["Model provider", config.model.provider],
-      ["Model", config.model.name],
+      ["Declared provider", config.model.provider],
+      ["Declared model", config.model.name],
       ["Temperature", String(config.temperature)],
       ["Max iterations", `${config.max_iterations} (model attempts, first try included)`],
       ["Timeout", `${config.timeout_seconds} seconds`],
@@ -114,6 +107,10 @@ function renderAgent() {
       ["Prompt version", prompt.version],
       ["Prompt fingerprint", prompt.sha256.slice(0, 16)],
     ]),
+    el("p", {
+      class: "muted small",
+      text: "The declared model is the specification's default. Each run uses the model chosen in the playground.",
+    }),
     el("h3", { text: "System prompt" }),
     el("pre", { text: prompt.text }),
   );
@@ -153,7 +150,7 @@ async function renderRuns() {
     return;
   }
   const table = el("table");
-  table.append(el("tr", {}, ...["Time", "Result", "Question", "Model", "Tries"].map((h) => el("th", { text: h }))));
+  table.append(el("tr", {}, ...["Time", "Result", "Input", "Model", "Tries"].map((h) => el("th", { text: h }))));
   for (const run of runs) {
     const tr = el(
       "tr",
@@ -193,7 +190,20 @@ function showRecord(record) {
 
   const answer = $("answer");
   clear(answer);
-  if (record.status === "succeeded") {
+  if (record.status === "succeeded" && record.output.sections) {
+    answer.append(pill("passed the figure and structure check", "ok"), el("h4", { text: record.output.headline }));
+    for (const section of record.output.sections) {
+      answer.append(
+        el(
+          "div",
+          { class: "finding" },
+          el("strong", { text: section.heading }),
+          el("p", { text: section.body }),
+          section.fact_ids.length ? chips(section.fact_ids) : null,
+        ),
+      );
+    }
+  } else if (record.status === "succeeded") {
     answer.append(pill("passed the figure check", "ok"), el("p", { text: record.output.summary }));
     for (const finding of record.output.findings) {
       answer.append(el("div", { class: "finding" }, el("div", { text: finding.text }), chips(finding.fact_ids)));
@@ -208,7 +218,7 @@ function showRecord(record) {
 
   const usage = record.usage;
   $("meta").textContent =
-    `${record.model_provider} / ${record.model_name} · ${record.attempts} attempt(s) · ` +
+    `ran on ${record.model_provider} / ${record.model_name} · ${record.attempts} attempt(s) · ` +
     `${usage.input_tokens} in / ${usage.output_tokens} out tokens${usage.estimated ? " (estimated)" : ""} · ` +
     `${seconds(record).toFixed(1)} s · prompt ${record.prompt_version} · data via ${dataPath(record)} · run ${record.run_id.slice(0, 8)}`;
 
@@ -272,13 +282,16 @@ function updateCount() {
 }
 
 async function runAgent() {
+  const kind = state.detail.summary.input_kind;
   const question = $("question").value.trim();
   const status = $("run-status");
-  if (!question) {
+  if (kind === "question" && !question) {
     status.textContent = "Type a question first.";
     return;
   }
-  const body = { question, provider: $("provider").value, data_access: $("access").value };
+  const body = { provider: $("provider").value, data_access: $("access").value };
+  if (kind === "question") body.question = question;
+  else body.audience = $("audience").value;
   if ($("model").value.trim()) body.model = $("model").value.trim();
   if ($("site").value.trim()) body.site = $("site").value.trim();
 
@@ -306,17 +319,41 @@ async function runAgent() {
 
 // ---------------------------------------------------------------- start
 
-async function start() {
-  for (const [label, text] of EXAMPLES) {
-    const button = el("button", { type: "button", text: label });
-    button.addEventListener("click", () => {
-      $("question").value = text;
-      updateCount();
-    });
-    $("examples").append(button);
+function applyInputKind() {
+  const { input_kind: kind, examples } = state.detail.summary;
+  $("question-row").hidden = kind !== "question";
+  $("audience-row").hidden = kind !== "audience";
+  const box = $("examples");
+  clear(box);
+  const audience = $("audience");
+  clear(audience);
+  if (kind === "question") {
+    for (const example of examples) {
+      const button = el("button", { type: "button", text: example.label });
+      button.addEventListener("click", () => {
+        $("question").value = example.value;
+        updateCount();
+      });
+      box.append(button);
+    }
+    $("question").value = examples.length ? examples[0].value : "";
+    updateCount();
+  } else {
+    for (const example of examples) audience.append(el("option", { value: example.value, text: example.label }));
   }
-  $("question").value = EXAMPLES[0][1];
-  updateCount();
+}
+
+async function loadAgent(agentId) {
+  state.agentId = agentId;
+  state.detail = await api(`/agents/${encodeURIComponent(agentId)}`);
+  renderAgent();
+  applyInputKind();
+  $("response").hidden = true;
+  $("run-status").textContent = "";
+  selectTab("basic");
+}
+
+async function start() {
   $("question").addEventListener("input", updateCount);
   $("question").addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) runAgent();
@@ -327,6 +364,13 @@ async function start() {
   for (const button of document.querySelectorAll(".tabs button")) {
     button.addEventListener("click", () => selectTab(button.dataset.tab));
   }
+  $("agent-picker").addEventListener("change", async () => {
+    try {
+      await loadAgent($("agent-picker").value);
+    } catch (error) {
+      $("run-status").textContent = `Could not load the agent: ${error.message}`;
+    }
+  });
 
   try {
     const [health, providers, agents] = await Promise.all([api("/health"), api("/providers"), api("/agents")]);
@@ -334,9 +378,9 @@ async function start() {
     state.providers = providers;
     renderProviders();
     if (agents.length === 0) throw new Error("The server lists no agents.");
-    state.agentId = agents[0].id;
-    state.detail = await api(`/agents/${encodeURIComponent(state.agentId)}`);
-    renderAgent();
+    state.agents = agents;
+    for (const agent of agents) $("agent-picker").append(el("option", { value: agent.id, text: agent.name }));
+    await loadAgent(agents[0].id);
   } catch (error) {
     const box = $("load-error");
     box.hidden = false;

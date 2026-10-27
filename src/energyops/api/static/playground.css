@@ -20,7 +20,7 @@ body { margin: 0; background: var(--bg); color: var(--text);
 .layout { display: grid; gap: 16px; padding: 16px; max-width: 1280px; margin: 0 auto; grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 1000px) { .layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; } }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
-h1 { font-size: 20px; margin: 0; } h2 { font-size: 17px; margin: 0 0 12px; } h3 { font-size: 15px; margin: 18px 0 8px; }
+h1 { font-size: 20px; margin: 0; } h2 { font-size: 17px; margin: 0 0 12px; } h3 { font-size: 15px; margin: 18px 0 8px; } h4 { font-size: 16px; margin: 10px 0 4px; }
 .muted { color: var(--muted); } .small { font-size: 13px; } p { margin: 6px 0; }
 .agent-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
 .pill { display: inline-block; font-size: 12px; padding: 2px 10px; border-radius: 99px; background: var(--code); border: 1px solid var(--line); }
