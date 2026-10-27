@@ -164,3 +164,11 @@ def test_invalid_requests_are_rejected(kwargs) -> None:
     args = {"messages": (Message("user", "hi")), **kwargs}
     with pytest.raises(ValueError):
         ModelRequest(**args)
+
+
+def test_scripted_replies_play_in_order_and_the_last_repeats() -> None:
+    adapter = TestAdapter(replies=["one", "two"])
+    texts = [asyncio.run(adapter.complete(req())).text for _ in range(3)]
+    assert texts == ["one", "two", "two"]
+    with pytest.raises(ValueError, match="either"):
+        TestAdapter("a", replies=["b"])
