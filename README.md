@@ -22,3 +22,7 @@ Git, GitHub CLI, Python 3.13 (managed by uv), uv, Docker Desktop and VS Code.
 Small changes on a feature branch, one focused pull request each, checked before merging.
 Secrets never go in this repository. Real values live in an ignored `.env` file locally
 and in Azure Key Vault in the cloud.
+
+## Documentation
+
+See [docs/architecture.md](docs/architecture.md) for the planned structure and the reasons behind it.
