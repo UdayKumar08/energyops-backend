@@ -13,7 +13,7 @@ import re
 import time
 from datetime import UTC, datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from energyops.agents.grounding import check_fact_ids, check_text
 from energyops.agents.runs import RunRecord, RunStatus, TraceRecorder, UsageTotals
@@ -62,11 +62,23 @@ ENERGY_ANALYST_SPEC = AgentSpec(
     description="Explains how a site used energy over a period using computed facts only.",
     config=AgentConfig(
         model=ModelChoice(provider="google-gemini", name=DEFAULT_GEMINI_MODEL),
-        prompt_file="energy_analyst/v1.md",
-        prompt_version="v1",
+        prompt_file="energy_analyst/v2.md",
+        prompt_version="v2",
         max_iterations=2,
     ),
 )
+
+
+class ReplyShapeError(ValueError):
+    """The reply could not be turned into an AnalystReport. The message says why."""
+
+
+def _describe(error: ValidationError) -> str:
+    parts = []
+    for item in error.errors():
+        where = ".".join(str(p) for p in item["loc"]) or "reply"
+        parts.append(f"{where}: {item['msg']}")
+    return "; ".join(parts[:5])
 
 
 def _parse_report(text: str) -> AnalystReport:
@@ -75,8 +87,17 @@ def _parse_report(text: str) -> AnalystReport:
         body = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", body).strip()
     start, end = body.find("{"), body.rfind("}")
     if start == -1 or end < start:
-        raise ValueError("no JSON object found")
-    return AnalystReport.model_validate(json.loads(body[start : end + 1]))
+        raise ReplyShapeError(
+            'the reply was not a single JSON object like {"summary": "...", "findings": []}'
+        )
+    try:
+        data = json.loads(body[start : end + 1])
+    except json.JSONDecodeError as exc:
+        raise ReplyShapeError(f"the reply was not valid JSON ({exc.msg})") from exc
+    try:
+        return AnalystReport.model_validate(data)
+    except ValidationError as exc:
+        raise ReplyShapeError(f"the JSON had the wrong shape ({_describe(exc)})") from exc
 
 
 def _blocked(text: str, terms: tuple[str, ...]) -> bool:
@@ -98,12 +119,8 @@ class EnergyAnalyst:
         """Return the parsed report (if the shape is right), a problem kind and the problems."""
         try:
             report = _parse_report(reply)
-        except ValueError:
-            return (
-                None,
-                "invalid_output",
-                ['the reply was not a single JSON object like {"summary": "...", "findings": []}'],
-            )
+        except ReplyShapeError as exc:
+            return None, "invalid_output", [str(exc)]
         problems = check_text(report.summary, sheet)
         for finding in report.findings:
             problems += check_text(finding.text, sheet)
