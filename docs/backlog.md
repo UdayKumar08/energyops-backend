@@ -16,7 +16,7 @@ The next small pieces of work, in order. Each item should fit in one pull reques
 
 6. Real providers. Adapters for the providers we have API access to. Done when one real call succeeds, provider errors map to our own errors, and no key appears in logs or output. Done for Google Gemini in #19 and for Nebius in #21, each with one real call run by hand. Streaming has only been tested against a fake transport, not live.
 
-7. Energy analyst agent. One agent with typed input and output, a versioned prompt, a list of allowed tools, a timeout and a few evaluation cases. Done when the evaluation cases run and the numbers in answers come from the Python functions, not the model. Planned as three pull requests: the fact sheet and the calculations behind it, the agent with its checks and evaluation cases, then a command to run the evaluation live.
+7. Energy analyst agent. One agent with typed input and output, a versioned prompt, a list of allowed tools, a timeout and a few evaluation cases. Done when the evaluation cases run and the numbers in answers come from the Python functions, not the model. Delivered as three pull requests: the fact sheet and its calculations (#23), the agent with its checks and scripted evaluation cases (#25), and a command that asks a real model the same kind of questions (issue #26). Status: the scripted cases and the command are tested against the labelled test adapter only. The agent has not yet been run against a real model, so it stays in draft until that run has been done by hand and its answers read.
 
 ## Phase 2: MCP server and client
 
