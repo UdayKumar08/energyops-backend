@@ -7,7 +7,7 @@ turned into JSON, and it never contains an API key.
 from __future__ import annotations
 
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 from uuid import uuid4
@@ -61,12 +61,14 @@ class TraceRecorder:
         self.steps: list[TraceStep] = []
 
     def step(self, name: str, started: float, **data: Any) -> None:
-        """Record a finished step. `started` is a time.perf_counter() reading."""
+        """Record a finished step. `started` is a time.perf_counter() reading taken at its start."""
+        elapsed = time.perf_counter() - started
         self.steps.append(
             TraceStep(
                 name=name,
-                started_at=datetime.now(UTC),
-                duration_ms=round((time.perf_counter() - started) * 1000, 3),
+                # Called when the step ends, so its start is the end minus how long it took.
+                started_at=datetime.now(UTC) - timedelta(seconds=elapsed),
+                duration_ms=round(elapsed * 1000, 3),
                 data=data,
             )
         )
