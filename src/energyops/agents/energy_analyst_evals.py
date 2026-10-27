@@ -105,6 +105,17 @@ CASES: tuple[EvalCase, ...] = (
         expected_attempts=2,
         expected_error_kind="grounding",
     ),
+    EvalCase(
+        name="too_many_findings_is_corrected",
+        description="Valid JSON with more than six findings is sent back and then accepted.",
+        question="Summarise this site's energy use.",
+        replies=lambda sheet: (
+            _reply("Everything.", [(f"Fact {i}.", ["F1"]) for i in range(9)]),
+            good_reply(sheet),
+        ),
+        expected_status=RunStatus.SUCCEEDED,
+        expected_attempts=2,
+    ),
 )
 
 

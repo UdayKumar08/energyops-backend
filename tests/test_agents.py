@@ -59,7 +59,7 @@ def test_a_good_run_records_output_usage_prompt_version_and_trace() -> None:
     record = ask(agent(TestAdapter(good_reply(SHEET))))
     assert record.status is RunStatus.SUCCEEDED and record.attempts == 1
     assert record.output is not None and record.output["findings"][0]["fact_ids"]
-    assert (record.prompt_version, len(record.prompt_sha256)) == ("v1", 64)
+    assert (record.prompt_version, len(record.prompt_sha256)) == ("v2", 64)
     assert (record.model_provider, record.model_name) == ("test-adapter", "deterministic-v1")
     assert record.usage.estimated is True and record.usage.output_tokens > 0
     assert [s.name for s in record.steps] == [
@@ -104,6 +104,56 @@ def test_the_prompt_sent_contains_the_fact_sheet_and_the_versioned_rules() -> No
     assert "EnergyOps energy analyst" in system.content
     assert "What was the peak?" in user.content and "F1 " in user.content
     assert seen[0].temperature == 0.0
+
+
+def test_a_reply_with_too_many_findings_is_told_exactly_what_is_wrong() -> None:
+    # Found by the first live run: two real models sent valid JSON with nine findings, and the
+    # old message wrongly said the reply was not JSON, so the retry could not fix it.
+    seen: list[ModelRequest] = []
+
+    class Spy(TestAdapter):
+        async def complete(self, request: ModelRequest) -> ModelResponse:
+            seen.append(request)
+            return await super().complete(request)
+
+    nine = json.dumps(
+        {
+            "summary": "Everything.",
+            "findings": [{"text": f"Fact {i}.", "fact_ids": ["F1"]} for i in range(9)],
+        }
+    )
+    record = ask(agent(Spy(replies=[nine, good_reply(SHEET)])))
+    assert record.status is RunStatus.SUCCEEDED and record.attempts == 2
+    told = seen[1].messages[-1].content
+    assert "wrong shape" in told and "findings" in told and "at most 6" in told
+    assert "not a single JSON object" not in told
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        ("Here you go!", "not a single JSON object"),
+        ('{"summary": "x", "findings": [}', "not valid JSON"),
+        ('{"summary": "", "findings": []}', "summary"),
+        ('{"summary": "x", "extra": 1}', "extra"),
+    ],
+)
+def test_each_kind_of_bad_reply_gets_its_own_explanation(reply: str, expected: str) -> None:
+    record = ask(agent(TestAdapter(reply)))
+    assert record.status is RunStatus.FAILED and record.error_kind == "invalid_output"
+    assert expected in (record.error or "")
+
+
+def test_prompt_versions_are_kept_and_the_new_one_asks_for_at_most_six_findings() -> None:
+    old = ENERGY_ANALYST_SPEC.model_copy(
+        update={
+            "config": ENERGY_ANALYST_SPEC.config.model_copy(
+                update={"prompt_file": "energy_analyst/v1.md", "prompt_version": "v1"}
+            )
+        }
+    )
+    assert load_prompt(old).sha256 != load_prompt(ENERGY_ANALYST_SPEC).sha256
+    assert "at most 6 findings" in load_prompt(ENERGY_ANALYST_SPEC).text
 
 
 # ---------------------------------------------------- failures are records, not crashes
@@ -252,7 +302,7 @@ def test_the_analyst_spec_matches_the_registry_style_fields() -> None:
     assert spec.config.max_iterations == 2 and spec.config.temperature == 0
     assert "peak-demand" in spec.capabilities
     prompt = load_prompt(spec)
-    assert prompt.version == "v1" and "fact sheet" in prompt.text
+    assert prompt.version == "v2" and "fact sheet" in prompt.text
 
 
 @pytest.mark.parametrize(
