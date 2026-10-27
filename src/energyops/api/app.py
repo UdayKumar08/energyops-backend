@@ -7,9 +7,11 @@ refused too, which stops a web page on another site from reaching it through DNS
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -34,6 +36,20 @@ from energyops.models.credentials import ProviderKeys
 
 LOCAL_HOSTS = ["127.0.0.1", "localhost"]
 AGENTS: dict[str, AgentSpec] = {"energy-analyst": ENERGY_ANALYST_SPEC}
+
+# The playground page and its two files. A fixed list, so no other path can be asked for.
+STATIC_DIR = Path(__file__).parent / "static"
+PLAYGROUND_FILES = {"app.js": "playground.js", "style.css": "playground.css"}
+PLAYGROUND_HEADERS = {
+    # Only this server's own scripts and styles may run, and the page may only talk to this server.
+    "Content-Security-Policy": (
+        "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
+        "img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
+}
 
 
 class ApiStartupRefused(RuntimeError):
@@ -149,6 +165,23 @@ def create_app(
 
     app = FastAPI(title="EnergyOps local API", version="0.1.0")
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=LOCAL_HOSTS)
+
+    @app.get("/", include_in_schema=False)
+    def root() -> RedirectResponse:
+        return RedirectResponse("/playground")
+
+    @app.get("/playground", include_in_schema=False)
+    def playground() -> FileResponse:
+        return FileResponse(
+            STATIC_DIR / "playground.html", media_type="text/html", headers=PLAYGROUND_HEADERS
+        )
+
+    @app.get("/playground/{name}", include_in_schema=False)
+    def playground_file(name: str) -> FileResponse:
+        filename = PLAYGROUND_FILES.get(name)
+        if filename is None:
+            raise HTTPException(status_code=404, detail="Not found.")
+        return FileResponse(STATIC_DIR / filename, headers=PLAYGROUND_HEADERS)
 
     @app.get("/health")
     def health() -> dict[str, str]:

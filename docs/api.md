@@ -11,3 +11,9 @@ The provider defaults to `test`, the labelled test adapter. It makes no network 
 A run that fails its checks, for example because the model invented a figure or the provider was unavailable, is a normal result. The API answers 200 with a record whose status is `failed` and whose `error_kind` says why. HTTP errors are kept for problems with the request itself.
 
 Run records are held in memory, the newest 200, and are lost when the server stops. Storing them in the database is part of the backend phase. The agent list is a fixed dictionary in `energyops/api/app.py` with one entry, and it generalises when the second agent exists.
+
+## The playground page
+
+Opening http://127.0.0.1:8000/ takes you to a plain page at `/playground` that uses these endpoints. It shows the agent's Basic, Configuration and Guardrails tabs and a Runs tab, and beside them a panel where you pick a model, type a question and press Run agent. The answer appears with its findings and the fact ids it cites, together with the attempts, tokens and time, and View trace opens every step the run took, including each reply the model gave and why any attempt was rejected. Download JSON saves the full run record. The page is read only: it shows the agent's specification but does not edit it, and the five buttons under the question are examples, including one question about cost and one about a forecast that the agent should decline.
+
+The page is three static files in `energyops/api/static` with no framework and nothing loaded from other sites. It is served with a strict Content-Security-Policy, only its own two assets can be fetched, and the script inserts everything that came from the server or a model as text, never as markup, so a hostile model reply cannot run code in the page. It is a stopgap for trying agents. The admin screens will be built properly in the web repository later and will replace it.
