@@ -1,6 +1,6 @@
 """Run the energy analyst against a real model and report what happened. Run it yourself:
 
-    uv run python -m energyops.agents.live_eval gemini|nebius [model-name] [--show]
+    uv run python -m energyops.agents.live_eval gemini|nebius [model-name] [--show] [--save FILE]
 
 It reads the key from your environment or local .env and never prints it. Each question is a
 real call (or two, when the first answer is rejected and sent back), so it uses a little of your
@@ -9,14 +9,21 @@ free quota. The calls run one after another.
 A "pass" here means one thing only: every kWh, kW and % figure in the answer matched the fact
 sheet and the reply had the right shape. It does not mean the explanation is good, complete or
 well written. Use --show and read the answers before drawing any conclusion about a model.
+
+Copying long lines out of a terminal can silently drop a space at each wrap point, which looks
+like a typo in the model's answer. To share or read results reliably, use --save FILE: it writes
+the full run records (answers, rejection reasons, token counts) as JSON. The file never
+contains an API key.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from energyops.agents.energy_analyst import ENERGY_ANALYST_SPEC, AnalystRequest, EnergyAnalyst
 from energyops.agents.runs import RunRecord, RunStatus
@@ -96,6 +103,19 @@ async def evaluate(
     return results
 
 
+def rejections(record: RunRecord) -> list[str]:
+    """One line per rejected attempt: which attempt, what kind, and what was wrong."""
+    lines = []
+    for step in record.steps:
+        problems = step.data.get("problems") if step.name == "validate_output" else None
+        if problems:
+            lines.append(
+                f"attempt {step.data.get('attempt')} rejected ({step.data.get('kind')}): "
+                + "; ".join(problems)
+            )
+    return lines
+
+
 def _outcome(result: CaseResult) -> str:
     record = result.record
     if result.passed:
@@ -114,8 +134,8 @@ def format_report(results: Sequence[CaseResult], show: bool = False) -> str:
             f"    {result.seconds:.1f}s, tokens in/out "
             f"{usage.input_tokens}/{usage.output_tokens}{estimated}"
         )
-        if not result.passed and record.error:
-            lines.append(f"    reason: {record.error}")
+        for line in rejections(record):
+            lines.append(f"    {line}")
         if show:
             lines.append(f"    question: {result.case.question}")
             if record.output is not None:
@@ -151,6 +171,21 @@ def _last_reply(record: RunRecord) -> str | None:
     return None
 
 
+def save_records(path: Path, results: Sequence[CaseResult]) -> None:
+    """Write every run record to a JSON file so results can be read or shared exactly."""
+    payload = [
+        {
+            "case": r.case.name,
+            "question": r.case.question,
+            "purpose": r.case.purpose,
+            "passed": r.passed,
+            "record": r.record.model_dump(mode="json"),
+        }
+        for r in results
+    ]
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def exit_code(results: Sequence[CaseResult]) -> int:
     """1 when the model could not be reached for any question, otherwise 0.
 
@@ -165,10 +200,14 @@ async def run(
     model: str | None = None,
     show: bool = False,
     client: ModelClient | None = None,
+    save: Path | None = None,
 ) -> int:
     chosen = client or build_client(provider, ProviderKeys(), model)
     results = await evaluate(chosen)
     print(format_report(results, show))
+    if save is not None:
+        save_records(save, results)
+        print(f"Run records saved to {save}")
     return exit_code(results)
 
 
@@ -180,8 +219,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("provider", choices=("gemini", "nebius"))
     parser.add_argument("model", nargs="?", help="exact model name (default: the provider's)")
     parser.add_argument("--show", action="store_true", help="print each answer, not just results")
+    parser.add_argument("--save", type=Path, metavar="FILE", help="write full run records as JSON")
     args = parser.parse_args(argv)
-    raise SystemExit(asyncio.run(run(args.provider, args.model, args.show)))
+    raise SystemExit(asyncio.run(run(args.provider, args.model, args.show, save=args.save)))
 
 
 if __name__ == "__main__":
