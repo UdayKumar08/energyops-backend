@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EnergyOps playground</title>
+  <link rel="stylesheet" href="/playground/style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">EnergyOps <span>agent playground</span></div>
+    <div class="local-tag" id="local-tag">local development only, no sign-in</div>
+  </header>
+
+  <noscript><p class="notice">This page needs JavaScript.</p></noscript>
+  <p class="notice" id="load-error" hidden></p>
+
+  <main class="layout">
+    <section class="card" aria-labelledby="agent-title">
+      <div class="agent-head">
+        <div>
+          <h1 id="agent-title">Loading agent</h1>
+          <p class="muted" id="agent-sub"></p>
+        </div>
+        <span class="pill" id="agent-status"></span>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="Agent sections">
+        <button role="tab" id="tab-basic" aria-selected="true" data-tab="basic">Basic</button>
+        <button role="tab" id="tab-config" aria-selected="false" data-tab="config">Configuration</button>
+        <button role="tab" id="tab-guardrails" aria-selected="false" data-tab="guardrails">Guardrails</button>
+        <button role="tab" id="tab-runs" aria-selected="false" data-tab="runs">Runs</button>
+      </div>
+
+      <div class="panel" id="panel-basic" role="tabpanel"></div>
+      <div class="panel" id="panel-config" role="tabpanel" hidden></div>
+      <div class="panel" id="panel-guardrails" role="tabpanel" hidden></div>
+      <div class="panel" id="panel-runs" role="tabpanel" hidden></div>
+    </section>
+
+    <section class="card" aria-labelledby="play-title">
+      <h2 id="play-title">Playground</h2>
+
+      <div class="row">
+        <label for="provider">Model</label>
+        <select id="provider"></select>
+      </div>
+      <p class="muted small" id="provider-note"></p>
+      <div class="row">
+        <label for="model">Exact model name <span class="muted">(optional)</span></label>
+        <input id="model" type="text" maxlength="100" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="row">
+        <label for="site">Site <span class="muted">(optional)</span></label>
+        <input id="site" type="text" maxlength="64" list="site-options" autocomplete="off" placeholder="demo-hotel">
+        <datalist id="site-options"><option value="demo-hotel"><option value="demo-office"></datalist>
+      </div>
+
+      <div class="row">
+        <label for="question">Test input</label>
+        <textarea id="question" rows="3" maxlength="500"></textarea>
+        <div class="between"><div class="examples" id="examples"></div><span class="muted small" id="count"></span></div>
+      </div>
+
+      <div class="actions">
+        <button class="primary" id="run">Run agent</button>
+        <span class="muted small" id="run-status" aria-live="polite"></span>
+      </div>
+
+      <div id="response" hidden>
+        <h3>Response</h3>
+        <div class="banner" id="banner" hidden></div>
+        <div id="answer"></div>
+        <p class="meta" id="meta"></p>
+        <div class="actions">
+          <button id="toggle-trace" aria-expanded="false">View trace</button>
+          <a id="download" class="button" download="run.json">Download JSON</a>
+        </div>
+        <div id="trace" hidden></div>
+      </div>
+    </section>
+  </main>
+  <script src="/playground/app.js"></script>
+</body>
+</html>
