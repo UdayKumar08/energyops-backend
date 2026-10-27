@@ -116,6 +116,15 @@ CASES: tuple[EvalCase, ...] = (
         expected_status=RunStatus.SUCCEEDED,
         expected_attempts=2,
     ),
+    EvalCase(
+        name="wrong_day_count_is_rejected",
+        description="Found in the second live run: '13-day period' for 14 days of data.",
+        question="Summarise this site's energy use.",
+        replies=lambda sheet: (_reply("Over the 13-day period the site used energy.", []),),
+        expected_status=RunStatus.FAILED,
+        expected_attempts=2,
+        expected_error_kind="grounding",
+    ),
 )
 
 
