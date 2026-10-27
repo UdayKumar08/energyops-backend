@@ -1,7 +1,7 @@
 """Run the energy analyst against a real model and report what happened. Run it yourself:
 
     uv run python -m energyops.agents.live_eval gemini|nebius [model-name] [--show]
-        [--save FILE] [--via mcp]
+        [--save FILE] [--via mcp] [--agent energy-analyst|report-writer]
 
 It reads the key from your environment or local .env and never prints it. Each question is a
 real call (or two, when the first answer is rejected and sent back), so it uses a little of your
@@ -26,8 +26,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from energyops.agents.energy_analyst import ENERGY_ANALYST_SPEC, AnalystRequest, EnergyAnalyst
 from energyops.agents.fact_sources import DirectFactSheets, FactSheetProvider, McpFactSheets
+from energyops.agents.registry import AGENTS, RunInputs
 from energyops.agents.runs import RunRecord, RunStatus
 from energyops.agents.sources import synthetic_demo_source
 from energyops.models.base import ModelClient
@@ -37,9 +37,14 @@ from energyops.models.live_check import build_client
 
 @dataclass(frozen=True, slots=True)
 class LiveCase:
+    """One thing to ask. For the report writer there is no question: `question` is then only a
+    label for the output, and `audience` and `site` are what is actually sent."""
+
     name: str
     question: str
     purpose: str
+    audience: str | None = None
+    site: str | None = None
 
 
 LIVE_CASES: tuple[LiveCase, ...] = (
@@ -91,19 +96,56 @@ class CaseResult:
         return (self.record.finished_at - self.record.started_at).total_seconds()
 
 
+REPORT_CASES: tuple[LiveCase, ...] = (
+    LiveCase(
+        "manager_hotel",
+        "Report for a manager, demo-hotel",
+        "The ordinary case: a plain-language report with every figure from the fact sheet.",
+        audience="manager",
+        site="demo-hotel",
+    ),
+    LiveCase(
+        "technical_hotel",
+        "Report for a technician, demo-hotel",
+        "The technical audience: precise units and the time of the peak.",
+        audience="technical",
+        site="demo-hotel",
+    ),
+    LiveCase(
+        "manager_office",
+        "Report for a manager, demo-office",
+        "A different site, so figures copied from the first site's pattern would be caught.",
+        audience="manager",
+        site="demo-office",
+    ),
+)
+
+CASES_BY_AGENT: dict[str, tuple[LiveCase, ...]] = {
+    "energy-analyst": LIVE_CASES,
+    "report-writer": REPORT_CASES,
+}
+
+
 async def evaluate(
     client: ModelClient,
     cases: Sequence[LiveCase] = LIVE_CASES,
     facts: FactSheetProvider | None = None,
+    agent: str = "energy-analyst",
 ) -> list[CaseResult]:
-    """Ask every case's question through the analyst, one at a time."""
-    analyst = EnergyAnalyst(
-        ENERGY_ANALYST_SPEC, client, facts or DirectFactSheets(synthetic_demo_source())
-    )
+    """Ask every case through the chosen agent, one at a time."""
+    entry = AGENTS[agent]
+    runner = entry.build(entry.spec, client, facts or DirectFactSheets(synthetic_demo_source()))
     results = []
     for case in cases:
-        record = await analyst.run(AnalystRequest(question=case.question))
-        results.append(CaseResult(case, record))
+        asks_question = entry.input_kind == "question"
+        request = entry.make_request(
+            RunInputs(
+                site=case.site,
+                question=case.question if asks_question else None,
+                audience=None if asks_question else case.audience,
+            )
+        )
+        results.append(CaseResult(case, await runner.run(request)))
     return results
 
 
@@ -142,7 +184,12 @@ def format_report(results: Sequence[CaseResult], show: bool = False) -> str:
             lines.append(f"    {line}")
         if show:
             lines.append(f"    question: {result.case.question}")
-            if record.output is not None:
+            if record.output is not None and "sections" in record.output:
+                lines.append(f"    headline: {record.output['headline']}")
+                for section in record.output["sections"]:
+                    ids = ", ".join(section["fact_ids"])
+                    lines.append(f"    section {section['heading']} [{ids}]: {section['body']}")
+            elif record.output is not None:
                 lines.append(f"    summary: {record.output['summary']}")
                 for finding in record.output["findings"]:
                     ids = ", ".join(finding["fact_ids"])
@@ -206,10 +253,11 @@ async def run(
     client: ModelClient | None = None,
     save: Path | None = None,
     via: str = "direct",
+    agent: str = "energy-analyst",
 ) -> int:
     chosen = client or build_client(provider, ProviderKeys(), model)
-    facts = McpFactSheets(ENERGY_ANALYST_SPEC) if via == "mcp" else None
-    results = await evaluate(chosen, facts=facts)
+    facts = McpFactSheets(AGENTS[agent].spec) if via == "mcp" else None
+    results = await evaluate(chosen, CASES_BY_AGENT[agent], facts=facts, agent=agent)
     print(format_report(results, show))
     if save is not None:
         save_records(save, results)
@@ -232,8 +280,16 @@ def main(argv: Sequence[str] | None = None) -> None:
         default="direct",
         help="get the fact sheet by calling Python directly (default) or through the MCP server",
     )
+    parser.add_argument(
+        "--agent",
+        choices=tuple(AGENTS),
+        default="energy-analyst",
+        help="which agent to evaluate (default: energy-analyst)",
+    )
     args = parser.parse_args(argv)
-    code = asyncio.run(run(args.provider, args.model, args.show, save=args.save, via=args.via))
+    code = asyncio.run(
+        run(args.provider, args.model, args.show, save=args.save, via=args.via, agent=args.agent)
+    )
     raise SystemExit(code)
 
 
