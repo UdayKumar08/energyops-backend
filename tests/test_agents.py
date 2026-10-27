@@ -178,6 +178,27 @@ def test_prompt_versions_are_kept_and_the_new_one_asks_for_at_most_six_findings(
     assert "lower by -26.3%" in newest  # named as the wording to avoid
 
 
+def test_trace_steps_record_when_they_started_not_when_they_ended() -> None:
+    # Found by reading a real run: a 17.7 second model call was stamped with its end time.
+    class Slow(TestAdapter):
+        async def complete(self, request: ModelRequest) -> ModelResponse:
+            await asyncio.sleep(0.2)
+            return await super().complete(request)
+
+    record = ask(agent(Slow(good_reply(SHEET))))
+    steps = {s.name: s for s in record.steps}
+    gap = (steps["validate_output"].started_at - steps["model_call"].started_at).total_seconds()
+    assert gap >= 0.18 and steps["model_call"].duration_ms >= 180
+    slack = timedelta(milliseconds=5)
+    ordered = [s.started_at for s in record.steps]
+    assert ordered == sorted(ordered)
+    for step in record.steps:
+        assert step.started_at >= record.started_at - slack
+        assert (
+            step.started_at + timedelta(milliseconds=step.duration_ms) <= record.finished_at + slack
+        )
+
+
 # ---------------------------------------------------- failures are records, not crashes
 
 
