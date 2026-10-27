@@ -1,0 +1,73 @@
+"""Application settings, read from environment variables and an optional .env file.
+
+Every setting uses the ENERGYOPS_ prefix. Secrets are SecretStr so they are hidden when a
+settings object is printed or logged. Combinations that would be unsafe are refused at
+start-up instead of being discovered later.
+"""
+
+import re
+from enum import StrEnum
+from functools import lru_cache
+from typing import Self
+from urllib.parse import urlparse
+
+from pydantic import SecretStr, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Environment(StrEnum):
+    LOCAL = "local"
+    DEV = "dev"
+    NONPROD = "nonprod"
+    PROD = "prod"
+
+
+class DataMode(StrEnum):
+    DEMO = "demo"
+    REPLAY = "replay"
+    LIVE = "live"
+
+
+# "prod" as a whole word inside a host name, such as energyops-prod.example.com.
+# It deliberately does not match words that merely contain it, such as "reproduction".
+_PROD_IN_HOST = re.compile(r"(^|[-.])prod([-.]|$)")
+
+
+class ConfigurationError(ValueError):
+    """Raised when settings are missing or form an unsafe combination."""
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="ENERGYOPS_", env_file=".env", extra="ignore")
+
+    environment: Environment = Environment.LOCAL
+    data_mode: DataMode = DataMode.DEMO
+    database_url: SecretStr
+    local_jwt_secret: SecretStr | None = None
+    log_level: str = "INFO"
+
+    @property
+    def database_host(self) -> str:
+        return urlparse(self.database_url.get_secret_value()).hostname or ""
+
+    @model_validator(mode="after")
+    def refuse_unsafe_combinations(self) -> Self:
+        problems: list[str] = []
+        if self.environment is Environment.PROD and self.data_mode is DataMode.DEMO:
+            problems.append("ENERGYOPS_DATA_MODE=demo is not allowed in the prod environment.")
+        if self.environment is not Environment.PROD and _PROD_IN_HOST.search(self.database_host):
+            problems.append(
+                f"Database host '{self.database_host}' looks like a production server, "
+                f"but the environment is '{self.environment.value}'."
+            )
+        if self.environment is not Environment.LOCAL and self.local_jwt_secret is not None:
+            problems.append("ENERGYOPS_LOCAL_JWT_SECRET is only allowed in the local environment.")
+        if problems:
+            raise ConfigurationError(" ".join(problems))
+        return self
+
+
+@lru_cache
+def get_settings() -> Settings:
+    # database_url is required and is read from the environment, which mypy cannot see.
+    return Settings()  # type: ignore[call-arg]
