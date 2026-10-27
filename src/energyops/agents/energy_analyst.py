@@ -15,9 +15,9 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from energyops.agents.fact_sources import FactSheetProvider, ToolAccessError
 from energyops.agents.grounding import check_fact_ids, check_text
 from energyops.agents.runs import RunRecord, RunStatus, TraceRecorder, UsageTotals
-from energyops.agents.sources import ReadingsSource
 from energyops.agents.spec import (
     AgentConfig,
     AgentSpec,
@@ -26,7 +26,7 @@ from energyops.agents.spec import (
     unimplemented_guardrails,
 )
 from energyops.calculations import EnergyDataError
-from energyops.facts import FactSheet, build_fact_sheet
+from energyops.facts import FactSheet
 from energyops.models import Message, ModelClient, ModelError, ModelRequest
 from energyops.models.providers import DEFAULT_GEMINI_MODEL
 
@@ -65,6 +65,8 @@ ENERGY_ANALYST_SPEC = AgentSpec(
         prompt_file="energy_analyst/v3.md",
         prompt_version="v3",
         max_iterations=2,
+        mcp_servers=("energyops-energy",),
+        allowed_tools=("list_sites", "get_fact_sheet"),
     ),
 )
 
@@ -106,13 +108,13 @@ def _blocked(text: str, terms: tuple[str, ...]) -> bool:
 
 
 class EnergyAnalyst:
-    def __init__(self, spec: AgentSpec, model: ModelClient, source: ReadingsSource) -> None:
+    def __init__(self, spec: AgentSpec, model: ModelClient, facts: FactSheetProvider) -> None:
         missing = unimplemented_guardrails(spec)
         if missing:
             raise ValueError(f"guardrails not implemented yet: {', '.join(missing)}")
         self.spec = spec
         self._model = model
-        self._source = source
+        self._facts = facts
         self._prompt = load_prompt(spec)
 
     def _check(self, reply: str, sheet: FactSheet) -> tuple[AnalystReport | None, str, list[str]]:
@@ -175,16 +177,28 @@ class EnergyAnalyst:
 
         started = time.perf_counter()
         try:
-            sheet = build_fact_sheet(self._source(request.site))
+            async with asyncio.timeout(config.timeout_seconds):
+                sheet = await self._facts(request.site, trace)
+        except TimeoutError:
+            trace.step("fact_sheet", started, via=self._facts.via, error="timeout")
+            return finish(
+                RunStatus.FAILED,
+                error_kind="tool_timeout",
+                error=f"no fact sheet within {config.timeout_seconds} seconds",
+            )
         except LookupError as exc:
-            trace.step("build_fact_sheet", started, error=str(exc))
+            trace.step("fact_sheet", started, via=self._facts.via, error=str(exc))
             return finish(RunStatus.FAILED, error_kind="unknown_site", error=str(exc))
         except EnergyDataError as exc:
-            trace.step("build_fact_sheet", started, error=str(exc))
+            trace.step("fact_sheet", started, via=self._facts.via, error=str(exc))
             return finish(RunStatus.FAILED, error_kind="unusable_data", error=str(exc))
+        except ToolAccessError as exc:
+            trace.step("fact_sheet", started, via=self._facts.via, error=str(exc))
+            return finish(RunStatus.FAILED, error_kind="tool_error", error=str(exc))
         trace.step(
-            "build_fact_sheet",
+            "fact_sheet",
             started,
+            via=self._facts.via,
             facts=[
                 {"id": f.id, "key": f.key, "display": f.display, "description": f.description}
                 for f in sheet.facts

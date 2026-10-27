@@ -7,6 +7,7 @@ from energyops.api import __main__ as api_main
 from energyops.api.app import ApiSettings, ApiStartupRefused, create_app
 from energyops.api.store import RunStore
 from energyops.config import Environment
+from energyops.mcp_servers.energy import create_server
 from energyops.models.credentials import ProviderKeys
 from energyops.models.test_adapter import SimulatedProviderFailure, TestAdapter
 
@@ -17,6 +18,8 @@ BOTH_KEYS = ProviderKeys(gemini_api_key=SecretStr(SECRET), nebius_api_key=Secret
 
 def client_for(**kw) -> TestClient:
     kw.setdefault("keys", NO_KEYS)
+    # An in-process MCP server keeps these tests fast. One test below uses a real subprocess.
+    kw.setdefault("mcp_target", create_server())
     # The API only answers to localhost host names, so the test client must use one.
     return TestClient(
         create_app(ApiSettings(environment=Environment.LOCAL), **kw), "http://127.0.0.1"
@@ -219,3 +222,43 @@ def test_the_store_filters_by_agent_and_validates_its_limit() -> None:
     assert [r.run_id for r in store.newest_first(agent="a")] == ["r1"]
     with pytest.raises(ValueError, match="at least 1"):
         RunStore(limit=0)
+
+
+# --------------------------------------------------------------- how the agent gets its data
+
+
+def test_runs_fetch_the_fact_sheet_through_mcp_by_default() -> None:
+    record = run(client_for()).json()
+    tools = [s["data"]["tool"] for s in record["steps"] if s["name"] == "tool_call"]
+    assert tools == ["list_sites", "get_fact_sheet"]
+    assert next(s for s in record["steps"] if s["name"] == "fact_sheet")["data"]["via"] == "mcp"
+
+
+def test_direct_data_access_makes_no_tool_calls() -> None:
+    record = run(client_for(), data_access="direct").json()
+    assert record["status"] == "succeeded"
+    assert [s for s in record["steps"] if s["name"] == "tool_call"] == []
+    assert next(s for s in record["steps"] if s["name"] == "fact_sheet")["data"]["via"] == "direct"
+
+
+def test_an_unknown_data_access_mode_is_rejected() -> None:
+    assert run(client_for(), data_access="ftp").status_code == 422
+
+
+def test_a_custom_data_source_reaches_the_mcp_path_too() -> None:
+    from energyops.agents.sources import synthetic_demo_source
+
+    custom = synthetic_demo_source(seed=99, days=7)
+    app = create_app(ApiSettings(environment=Environment.LOCAL), keys=NO_KEYS, source=custom)
+    record = run(TestClient(app, "http://127.0.0.1"), site="demo-hotel").json()
+    assert record["status"] == "succeeded"
+    figures = next(s for s in record["steps"] if s["name"] == "fact_sheet")["data"]["facts"]
+    assert "672 readings" in figures[0]["description"]  # 7 days, not the default 14
+
+
+def test_the_default_server_is_a_real_subprocess_and_works_through_the_api() -> None:
+    app = create_app(ApiSettings(environment=Environment.LOCAL), keys=NO_KEYS)  # no mcp_target
+    record = run(TestClient(app, "http://127.0.0.1"), site="demo-office").json()
+    assert record["status"] == "succeeded"
+    calls = [s for s in record["steps"] if s["name"] == "tool_call"]
+    assert [c["data"]["tool"] for c in calls] == ["get_fact_sheet"]

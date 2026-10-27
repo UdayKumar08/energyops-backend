@@ -11,6 +11,7 @@ from energyops.agents.energy_analyst import (
     EnergyAnalyst,
 )
 from energyops.agents.energy_analyst_evals import CASES, good_reply, run_scripted
+from energyops.agents.fact_sources import DirectFactSheets
 from energyops.agents.grounding import check_fact_ids, check_text
 from energyops.agents.runs import RunStatus
 from energyops.agents.sources import synthetic_demo_source
@@ -32,7 +33,7 @@ SHEET = build_fact_sheet(SOURCE(None))
 
 
 def agent(model: ModelClient, spec: AgentSpec = ENERGY_ANALYST_SPEC) -> EnergyAnalyst:
-    return EnergyAnalyst(spec, model, SOURCE)
+    return EnergyAnalyst(spec, model, DirectFactSheets(SOURCE))
 
 
 def ask(analyst: EnergyAnalyst, question: str = "Summarise this site.", site: str | None = None):
@@ -64,7 +65,7 @@ def test_a_good_run_records_output_usage_prompt_version_and_trace() -> None:
     assert record.usage.estimated is True and record.usage.output_tokens > 0
     assert [s.name for s in record.steps] == [
         "check_input",
-        "build_fact_sheet",
+        "fact_sheet",
         "model_call",
         "validate_output",
     ]
@@ -233,7 +234,7 @@ def test_unknown_site_and_unusable_data_fail_cleanly() -> None:
         return []
 
     record = asyncio.run(
-        EnergyAnalyst(ENERGY_ANALYST_SPEC, TestAdapter("{}"), empty).run(
+        EnergyAnalyst(ENERGY_ANALYST_SPEC, TestAdapter("{}"), DirectFactSheets(empty)).run(
             AnalystRequest(question="hi")
         )
     )

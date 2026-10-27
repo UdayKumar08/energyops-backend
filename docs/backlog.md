@@ -22,7 +22,7 @@ The next small pieces of work, in order. Each item should fit in one pull reques
 
 8. Read-only energy tool as an MCP server over a local transport. Done when the server and a client are each tested alone, with input and output schemas and validation. Done in issue #40 (docs/mcp.md): two read-only tools over stdio using the official SDK, tested in process and as a real subprocess, with schemas, argument validation and a check command. Only the demo data is reachable.
 
-9. Agent uses the tool through MCP. Done when the agent answers from tool results and a test shows it cannot read a site outside the caller's access.
+9. Agent uses the tool through MCP. Done when the agent answers from tool results and a test shows it cannot read a site outside the caller's access. Partly done in issue #42: the analyst fetches its fact sheet through the server, the spec's server and tool lists and the read-only requirement are enforced and tested, tool calls appear in the trace, and a direct path is kept for comparison. Not done: the test that it cannot read a site outside the caller's access, because there is no caller or sign-in yet, so that waits for the authentication phase. Today the only limit is the server's fixed list of two demo sites. It has also not yet been run against a real model through MCP.
 
 ## Later phases
 
