@@ -8,7 +8,7 @@ carries provider "test-adapter" so it can never be mistaken for real model outpu
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 
 from energyops.models.errors import ModelError, error_from_http_status
@@ -36,10 +36,16 @@ class TestAdapter:
         self,
         reply: str | None = None,
         *,
+        replies: Sequence[str] | None = None,
         fail_with: SimulatedProviderFailure | None = None,
         fail_after_chunks: int | None = None,
     ) -> None:
+        if reply is not None and replies is not None:
+            raise ValueError("give either reply or replies, not both")
         self._reply = reply
+        # One scripted reply per call, in order. The last one repeats once the list runs out.
+        self._replies = tuple(replies) if replies else None
+        self._calls = 0
         self._fail_with = fail_with
         self._fail_after_chunks = fail_after_chunks
 
@@ -47,6 +53,10 @@ class TestAdapter:
         return error_from_http_status(failure.status, failure.message, provider=self.provider)
 
     def _text_for(self, request: ModelRequest) -> str:
+        if self._replies is not None:
+            text = self._replies[min(self._calls, len(self._replies) - 1)]
+            self._calls += 1
+            return text
         if self._reply is not None:
             return self._reply
         last_user = next((m.content for m in reversed(request.messages) if m.role == "user"), "")
