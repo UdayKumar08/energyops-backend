@@ -9,9 +9,12 @@ It is a decision-support platform. It does not control equipment or trade energy
 
 ## Status
 
-Phase 0, foundation. Nothing is implemented yet. This repository will hold the Python
-backend: API, database migrations, model adapters, agents, MCP servers and tests. The
-web application will live in a separate repository.
+Phase 1, in progress. Implemented so far: the project skeleton and CI, settings, a
+synthetic meter data generator, energy calculations, a common model interface with a
+labelled test adapter, and adapters for Google Gemini and Nebius. No agent, API, database
+or user interface exists yet. This repository will hold the Python backend: API, database
+migrations, model adapters, agents, MCP servers and tests. The web application will live
+in a separate repository.
 
 ## Requirements
 
@@ -28,3 +31,5 @@ and in Azure Key Vault in the cloud.
 See [docs/architecture.md](docs/architecture.md) for the planned structure and the reasons behind it.
 
 See [docs/backlog.md](docs/backlog.md) for what is planned next and how each item is judged done.
+
+See [docs/agents.md](docs/agents.md) for the planned agents (at most five) and the rules they follow.
