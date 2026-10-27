@@ -16,12 +16,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from energyops.agents.energy_analyst import ENERGY_ANALYST_SPEC, AnalystRequest, EnergyAnalyst
-from energyops.agents.energy_analyst_evals import good_reply
 from energyops.agents.fact_sources import DirectFactSheets, McpFactSheets, McpTarget
+from energyops.agents.registry import AGENTS, AgentEntry, InvalidRunInput, RunInputs
 from energyops.agents.runs import RunRecord, RunStatus
 from energyops.agents.sources import ReadingsSource, synthetic_demo_source
-from energyops.agents.spec import AgentSpec, load_prompt, unimplemented_guardrails
+from energyops.agents.spec import load_prompt, unimplemented_guardrails
 from energyops.api.providers import (
     ProviderId,
     ProviderInfo,
@@ -36,7 +35,6 @@ from energyops.models.base import ModelClient
 from energyops.models.credentials import ProviderKeys
 
 LOCAL_HOSTS = ["127.0.0.1", "localhost"]
-AGENTS: dict[str, AgentSpec] = {"energy-analyst": ENERGY_ANALYST_SPEC}
 
 # The playground page and its two files. A fixed list, so no other path can be asked for.
 STATIC_DIR = Path(__file__).parent / "static"
@@ -63,6 +61,11 @@ class ApiSettings(BaseSettings):
     environment: Environment = Environment.LOCAL
 
 
+class ExampleView(BaseModel):
+    label: str
+    value: str
+
+
 class AgentSummary(BaseModel):
     id: str
     name: str
@@ -73,6 +76,9 @@ class AgentSummary(BaseModel):
     model_provider: str
     model_name: str
     prompt_version: str
+    # "question": a free-text question. "audience": a choice of who the report is for.
+    input_kind: str
+    examples: list[ExampleView]
 
 
 class PromptView(BaseModel):
@@ -91,7 +97,9 @@ class AgentDetail(BaseModel):
 class RunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    question: str = Field(min_length=1, max_length=500)
+    # Which of these an agent takes depends on its input kind (see GET /agents).
+    question: str | None = Field(default=None, min_length=1, max_length=500)
+    audience: str | None = Field(default=None, max_length=32)
     site: str | None = Field(default=None, max_length=64)
     provider: ProviderId = "test"
     # "mcp": the agent calls the read-only energy MCP server (a subprocess). "direct": plain Python.
@@ -115,9 +123,10 @@ class RunSummary(BaseModel):
 ClientFactory = Callable[[ProviderId, str | None, ProviderKeys, str], ModelClient]
 
 
-def _summarise(agent_id: str, spec: AgentSpec) -> AgentSummary:
+def _summarise(entry: AgentEntry) -> AgentSummary:
+    spec = entry.spec
     return AgentSummary(
-        id=agent_id,
+        id=entry.id,
         name=spec.name,
         domain=spec.domain,
         status=spec.status.value,
@@ -126,7 +135,18 @@ def _summarise(agent_id: str, spec: AgentSpec) -> AgentSummary:
         model_provider=spec.config.model.provider,
         model_name=spec.config.model.name,
         prompt_version=spec.config.prompt_version,
+        input_kind=entry.input_kind,
+        examples=[ExampleView(label=e.label, value=e.value) for e in entry.examples],
     )
+
+
+def _input_label(record: RunRecord) -> str:
+    """What was asked, for a list of runs: the question, or the audience of a report."""
+    question = record.input.get("question")
+    if question:
+        return str(question)
+    audience = record.input.get("audience")
+    return f"Report for {audience}" if audience else ""
 
 
 def _run_summary(record: RunRecord) -> RunSummary:
@@ -134,7 +154,7 @@ def _run_summary(record: RunRecord) -> RunSummary:
         run_id=record.run_id,
         agent=record.agent,
         status=record.status,
-        question=str(record.input.get("question", "")),
+        question=_input_label(record),
         model_provider=record.model_provider,
         model_name=record.model_name,
         attempts=record.attempts,
@@ -202,20 +222,21 @@ def create_app(
 
     @app.get("/agents")
     def list_agents() -> list[AgentSummary]:
-        return [_summarise(agent_id, spec) for agent_id, spec in AGENTS.items()]
+        return [_summarise(entry) for entry in AGENTS.values()]
 
-    def spec_for(agent_id: str) -> AgentSpec:
-        spec = AGENTS.get(agent_id)
-        if spec is None:
+    def entry_for(agent_id: str) -> AgentEntry:
+        entry = AGENTS.get(agent_id)
+        if entry is None:
             raise HTTPException(status_code=404, detail=f"No agent called '{agent_id}'.")
-        return spec
+        return entry
 
     @app.get("/agents/{agent_id}")
     def agent_detail(agent_id: str) -> AgentDetail:
-        spec = spec_for(agent_id)
+        entry = entry_for(agent_id)
+        spec = entry.spec
         prompt = load_prompt(spec)
         return AgentDetail(
-            summary=_summarise(agent_id, spec),
+            summary=_summarise(entry),
             spec=spec.model_dump(mode="json"),
             prompt=PromptView(version=prompt.version, sha256=prompt.sha256, text=prompt.text),
             guardrails_not_implemented=unimplemented_guardrails(spec),
@@ -224,9 +245,16 @@ def create_app(
     @app.post("/agents/{agent_id}/runs")
     async def run_agent(agent_id: str, body: RunRequest) -> RunRecord:
         """Run the agent once. A run that fails its checks is still a 200 with status 'failed'."""
-        spec = spec_for(agent_id)
+        entry = entry_for(agent_id)
+        spec = entry.spec
         try:
-            test_reply = good_reply(build_fact_sheet(readings(body.site)))
+            request = entry.make_request(
+                RunInputs(site=body.site, question=body.question, audience=body.audience)
+            )
+        except InvalidRunInput as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        try:
+            test_reply = entry.test_reply(build_fact_sheet(readings(body.site)))
         except (LookupError, ValueError):
             test_reply = "{}"  # the agent will report the unknown site or unusable data itself
         try:
@@ -238,9 +266,7 @@ def create_app(
             if body.data_access == "mcp"
             else DirectFactSheets(readings)
         )
-        record = await EnergyAnalyst(spec, client, facts).run(
-            AnalystRequest(question=body.question, site=body.site)
-        )
+        record = await entry.build(spec, client, facts).run(request)
         runs.add(record)
         return record
 

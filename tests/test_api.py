@@ -76,10 +76,14 @@ def test_health_reports_the_environment() -> None:
 
 def test_agents_are_listed_with_registry_style_fields() -> None:
     agents = client_for().get("/agents").json()
-    assert [a["id"] for a in agents] == ["energy-analyst"]
+    assert [a["id"] for a in agents] == ["energy-analyst", "report-writer"]
     agent = agents[0]
     assert agent["status"] == "draft" and agent["prompt_version"] == "v3"
     assert "peak-demand" in agent["capabilities"]
+    assert agent["input_kind"] == "question" and agent["examples"][0]["label"] == "Summary"
+    writer = agents[1]
+    assert writer["input_kind"] == "audience" and writer["prompt_version"] == "v1"
+    assert [e["value"] for e in writer["examples"]] == ["manager", "technical"]
 
 
 def test_agent_detail_shows_spec_prompt_and_unimplemented_guardrails() -> None:
@@ -262,3 +266,61 @@ def test_the_default_server_is_a_real_subprocess_and_works_through_the_api() -> 
     assert record["status"] == "succeeded"
     calls = [s for s in record["steps"] if s["name"] == "tool_call"]
     assert [c["data"]["tool"] for c in calls] == ["get_fact_sheet"]
+
+
+# --------------------------------------------------------------- the second agent
+
+
+def run_report(client: TestClient, **body):
+    return client.post("/agents/report-writer/runs", json=body)
+
+
+def test_the_report_writer_runs_with_the_test_adapter_and_is_labelled() -> None:
+    response = run_report(client_for(), audience="technical")
+    assert response.status_code == 200
+    record = response.json()
+    assert record["status"] == "succeeded" and record["model_provider"] == "test-adapter"
+    assert record["agent"] == "EnergyOps Report Writer"
+    assert record["input"] == {"site": None, "audience": "technical"}
+    assert [s["heading"] for s in record["output"]["sections"]] == ["Consumption", "Demand"]
+    assert "fact_sheet" in [s["name"] for s in record["steps"]]
+
+
+def test_the_report_writer_defaults_to_a_manager_audience_and_works_on_either_data_path() -> None:
+    client = client_for()
+    for access in ("mcp", "direct"):
+        record = run_report(client, data_access=access, site="demo-office").json()
+        assert record["status"] == "succeeded" and record["input"]["audience"] == "manager"
+        via = next(s for s in record["steps"] if s["name"] == "fact_sheet")["data"]["via"]
+        assert via == access
+
+
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        ("report-writer", {"question": "Summarise."}),
+        ("report-writer", {"audience": "the press"}),
+        ("energy-analyst", {"audience": "manager"}),
+        ("energy-analyst", {}),
+    ],
+)
+def test_input_that_does_not_fit_the_agent_is_a_422_and_nothing_runs(path, body) -> None:
+    client = client_for()
+    assert client.post(f"/agents/{path}/runs", json=body).status_code == 422
+    assert client.get("/runs").json() == []
+
+
+def test_runs_of_both_agents_are_listed_with_something_readable_and_filterable() -> None:
+    client = client_for()
+    run(client, question="Summarise.")
+    run_report(client, audience="technical")
+    listed = client.get("/runs").json()
+    assert [r["question"] for r in listed] == ["Report for technical", "Summarise."]
+    only = client.get("/runs", params={"agent": "EnergyOps Report Writer"}).json()
+    assert [r["agent"] for r in only] == ["EnergyOps Report Writer"]
+
+
+def test_report_writer_detail_shows_its_own_prompt() -> None:
+    detail = client_for().get("/agents/report-writer").json()
+    assert detail["prompt"]["version"] == "v1" and "Data quality" in detail["prompt"]["text"]
+    assert detail["spec"]["config"]["allowed_tools"] == ["list_sites", "get_fact_sheet"]
