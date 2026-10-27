@@ -59,7 +59,7 @@ def test_a_good_run_records_output_usage_prompt_version_and_trace() -> None:
     record = ask(agent(TestAdapter(good_reply(SHEET))))
     assert record.status is RunStatus.SUCCEEDED and record.attempts == 1
     assert record.output is not None and record.output["findings"][0]["fact_ids"]
-    assert (record.prompt_version, len(record.prompt_sha256)) == ("v2", 64)
+    assert (record.prompt_version, len(record.prompt_sha256)) == ("v3", 64)
     assert (record.model_provider, record.model_name) == ("test-adapter", "deterministic-v1")
     assert record.usage.estimated is True and record.usage.output_tokens > 0
     assert [s.name for s in record.steps] == [
@@ -144,6 +144,26 @@ def test_each_kind_of_bad_reply_gets_its_own_explanation(reply: str, expected: s
     assert expected in (record.error or "")
 
 
+@pytest.mark.parametrize(
+    "text", ["Over 14 days the site used energy.", "A 14-day period.", "Data for 14 DAYS."]
+)
+def test_the_right_day_count_passes(text: str) -> None:
+    assert check_text(text, SHEET) == []
+
+
+@pytest.mark.parametrize(
+    "text", ["Over the 13-day period.", "In 15 days.", "Just 1 day of data.", "A 2-day gap."]
+)
+def test_a_wrong_day_count_is_flagged(text: str) -> None:
+    problems = check_text(text, SHEET)
+    assert problems and "days figure" in problems[0]
+
+
+def test_weekday_words_and_dates_are_not_day_counts() -> None:
+    text = "On 5 weekdays and 2 weekend days, from 2026-03-02 to 2026-03-15, sorted by day."
+    assert check_text(text, SHEET) == []
+
+
 def test_prompt_versions_are_kept_and_the_new_one_asks_for_at_most_six_findings() -> None:
     old = ENERGY_ANALYST_SPEC.model_copy(
         update={
@@ -153,7 +173,9 @@ def test_prompt_versions_are_kept_and_the_new_one_asks_for_at_most_six_findings(
         }
     )
     assert load_prompt(old).sha256 != load_prompt(ENERGY_ANALYST_SPEC).sha256
-    assert "at most 6 findings" in load_prompt(ENERGY_ANALYST_SPEC).text
+    newest = load_prompt(ENERGY_ANALYST_SPEC).text
+    assert "at most 6 findings" in newest and "% or days" in newest
+    assert "lower by -26.3%" in newest  # named as the wording to avoid
 
 
 # ---------------------------------------------------- failures are records, not crashes
@@ -302,7 +324,7 @@ def test_the_analyst_spec_matches_the_registry_style_fields() -> None:
     assert spec.config.max_iterations == 2 and spec.config.temperature == 0
     assert "peak-demand" in spec.capabilities
     prompt = load_prompt(spec)
-    assert prompt.version == "v2" and "fact sheet" in prompt.text
+    assert prompt.version == "v3" and "fact sheet" in prompt.text
 
 
 @pytest.mark.parametrize(

@@ -1,11 +1,12 @@
 """The grounding check: nothing an agent writes may contain a figure that Python did not compute.
 
-Figures with an energy unit (kWh, kW), percentages and anything with a currency symbol are
-checked. A figure with kWh or kW must equal a computed fact with the same unit, compared at the
-number of decimal places the writer used. A percentage must match a computed percentage, and the
-sign is ignored because words like "lower" carry it. Other units and every currency amount are
-rejected, because the fact sheet holds no such figures. Plain numbers without a unit, such as
-dates, times and fact ids, are not figures and are skipped.
+Figures with an energy unit (kWh, kW), percentages, day counts ("14 days", "14-day") and anything
+with a currency symbol are checked. A figure with kWh or kW must equal a computed fact with the
+same unit, compared at the number of decimal places the writer used. A percentage must match a
+computed percentage, and the sign is ignored because words like "lower" carry it. A day count
+must match the days-covered fact. Other units and every currency amount are rejected, because the
+fact sheet holds no such figures. Plain numbers without a unit, such as dates, times and fact
+ids, are not figures and are skipped.
 """
 
 from __future__ import annotations
@@ -18,10 +19,11 @@ _ID = re.compile(r"\bF\d+\b")
 _DATETIME = re.compile(r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:[+-]\d{2}:\d{2}|Z)?)?")
 _CLOCK = re.compile(r"\b\d{1,2}:\d{2}\b")
 _FIGURE = re.compile(
-    r"(?P<cur>[£$€])?\s?(?P<num>\d[\d,]*(?:\.\d+)?)\s?(?P<unit>kWh|MWh|GWh|kW|MW|GW|W|%)?(?![A-Za-z])",
+    r"(?P<cur>[£$€])?\s?(?P<num>\d[\d,]*(?:\.\d+)?)[\s-]?"
+    r"(?P<unit>kWh|MWh|GWh|kW|MW|GW|W|%|days?)?(?![A-Za-z])",
     re.IGNORECASE,
 )
-_CHECKED_UNITS = {"kwh": "kWh", "kw": "kW", "%": "%"}
+_CHECKED_UNITS = {"kwh": "kWh", "kw": "kW", "%": "%", "day": "days", "days": "days"}
 
 
 def _clean(text: str) -> str:
@@ -42,7 +44,7 @@ def check_text(text: str, sheet: FactSheet) -> list[str]:
         if not unit:
             continue
         if unit not in _CHECKED_UNITS:
-            problems.append(f"'{shown}': use kWh, kW or % exactly as in the fact sheet")
+            problems.append(f"'{shown}': use kWh, kW, % or days exactly as in the fact sheet")
             continue
         canonical = _CHECKED_UNITS[unit]
         number = match.group("num").replace(",", "")

@@ -61,9 +61,14 @@ def test_missing_readings_are_flagged_and_left_out_of_daily_figures() -> None:
     assert sheet.facts[0].value == pytest.approx(10.0 * 0.25 * len(readings))
 
 
-def test_no_complete_day_gives_only_totals_and_demand_with_a_warning() -> None:
+def test_no_complete_day_gives_only_totals_demand_and_days_covered_with_a_warning() -> None:
     sheet = build_fact_sheet(flat_week(10.0, days=1)[:40])
-    assert {f.key for f in sheet.facts} == {"total_energy", "peak_demand", "lowest_demand"}
+    assert {f.key for f in sheet.facts} == {
+        "total_energy",
+        "peak_demand",
+        "lowest_demand",
+        "days_covered",
+    }
     assert any("No complete day" in w for w in sheet.warnings)
 
 
@@ -80,3 +85,19 @@ def test_unsorted_readings_still_give_the_right_period() -> None:
     sheet = build_fact_sheet(list(reversed(flat_week(days=2))))
     assert sheet.first_reading == MONDAY
     assert sheet.last_reading == MONDAY + timedelta(minutes=15 * (96 * 2 - 1))
+
+
+def test_days_covered_is_the_last_fact_so_earlier_ids_do_not_move() -> None:
+    sheet = build_fact_sheet(flat_week(days=14))
+    last = sheet.facts[-1]
+    assert (last.key, last.id, last.unit, last.value) == ("days_covered", "F10", "days", 14.0)
+    assert last.display == "14 days"
+    assert [f.key for f in sheet.facts][:2] == ["total_energy", "average_daily_energy"]
+    peak = sheet.by_id("F8")
+    assert peak is not None and peak.key == "peak_demand"
+
+
+def test_days_covered_counts_incomplete_days_and_uses_the_singular() -> None:
+    assert build_fact_sheet(flat_week(days=1)).facts[-1].display == "1 day"
+    short = flat_week(days=3)[:-10]  # the last day is incomplete but still has readings
+    assert build_fact_sheet(short).facts[-1].value == 3.0

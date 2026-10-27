@@ -37,6 +37,8 @@ class Fact:
         """The figure exactly as it is shown to a model and expected back, one decimal place."""
         if self.unit == "%":
             return f"{self.value:.1f}%"
+        if self.unit == "days":
+            return f"{self.value:.0f} day" if self.value == 1 else f"{self.value:.0f} days"
         return f"{self.value:.1f} {self.unit}"
 
 
@@ -134,6 +136,9 @@ def build_fact_sheet(readings: Sequence[MeterReading]) -> FactSheet:
     low = lowest_demand(readings)
     add("peak_demand", "Peak average demand in one interval", peak.power_kw, "kW", peak.timestamp)
     add("lowest_demand", "Lowest average demand in one interval", low.power_kw, "kW", low.timestamp)
+    # Added last so the ids of the figures above do not change. Counts calendar days (UTC) that
+    # have any reading, complete or not, so a model can say how long the period is without guessing.
+    add("days_covered", "Calendar days with readings (UTC)", float(len(days)), "days")
 
     return FactSheet(
         meter_id=ordered[0].meter_id,

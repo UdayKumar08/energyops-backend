@@ -62,8 +62,8 @@ ENERGY_ANALYST_SPEC = AgentSpec(
     description="Explains how a site used energy over a period using computed facts only.",
     config=AgentConfig(
         model=ModelChoice(provider="google-gemini", name=DEFAULT_GEMINI_MODEL),
-        prompt_file="energy_analyst/v2.md",
-        prompt_version="v2",
+        prompt_file="energy_analyst/v3.md",
+        prompt_version="v3",
         max_iterations=2,
     ),
 )
