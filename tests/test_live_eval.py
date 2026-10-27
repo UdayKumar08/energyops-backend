@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import pytest
 
@@ -33,7 +34,8 @@ def test_an_invented_figure_is_reported_as_a_failure_not_an_error() -> None:
     assert not results[0].passed and exit_code(results) == 0
     report = format_report(results)
     assert "summary: FAIL (grounding)" in report
-    assert "reason:" in report and "999.9" in report
+    assert "attempt 1 rejected (grounding)" in report and "999.9" in report
+    assert "attempt 2 rejected (grounding)" in report
     assert "0 passed first time, 0 passed after a retry, 1 failed, out of 1" in report
 
 
@@ -42,6 +44,8 @@ def test_a_corrected_answer_is_reported_as_a_pass_after_retry() -> None:
     assert results[0].passed and results[0].record.attempts == 2
     report = format_report(results)
     assert "pass after retry (2 tries)" in report
+    assert "attempt 1 rejected (grounding): '999.9 kWh' does not match" in report
+    assert "attempt 2" not in report
     assert "0 passed first time, 1 passed after a retry, 0 failed" in report
 
 
@@ -89,3 +93,41 @@ def test_a_missing_key_stops_before_any_call(monkeypatch, tmp_path) -> None:
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     with pytest.raises(SystemExit, match="GEMINI_API_KEY is not set"):
         live_eval.main(["gemini"])
+
+
+def test_save_writes_full_run_records_as_json(tmp_path) -> None:
+    out = tmp_path / "run.json"
+    code = asyncio.run(
+        live_eval.run("gemini", client=TestAdapter(replies=[INVENTED, GOOD]), save=out)
+    )
+    assert code == 0
+    saved = json.loads(out.read_text(encoding="utf-8"))
+    assert [row["case"] for row in saved] == [c.name for c in LIVE_CASES]
+    first = saved[0]
+    assert first["passed"] is True and first["record"]["attempts"] == 2
+    steps = [s["name"] for s in first["record"]["steps"]]
+    assert steps.count("model_call") == 2 and "999.9" in json.dumps(first["record"]["steps"])
+    assert first["record"]["prompt_version"] == "v3"
+
+
+def test_save_is_announced_and_never_contains_a_key(tmp_path, capsys) -> None:
+    out = tmp_path / "run.json"
+    asyncio.run(live_eval.run("gemini", client=TestAdapter(GOOD), save=out))
+    assert f"Run records saved to {out}" in capsys.readouterr().out
+    text = out.read_text(encoding="utf-8").lower()
+    assert "api_key" not in text and "bearer" not in text
+
+
+def test_main_accepts_save_and_passes_it_on(monkeypatch, tmp_path) -> None:
+    seen = {}
+
+    async def fake_run(provider, model, show, client=None, save=None):
+        seen.update(provider=provider, model=model, show=show, save=save)
+        return 0
+
+    monkeypatch.setattr(live_eval, "run", fake_run)
+    target = tmp_path / "out.json"
+    with pytest.raises(SystemExit) as exit_info:
+        live_eval.main(["nebius", "some-model", "--show", "--save", str(target)])
+    assert exit_info.value.code == 0
+    assert seen == {"provider": "nebius", "model": "some-model", "show": True, "save": target}
