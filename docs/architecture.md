@@ -30,4 +30,4 @@ LOCAL is a reproducible developer setup with synthetic data and optional real pr
 
 ## Status
 
-Implemented: nothing in this repository yet. Planned next: model connection and the first agent, then an MCP server, multi-agent workflows, the database and API, authentication, the customer interface, administration, data and forecasting, voice, and Azure deployment, in that order.
+Implemented: the project skeleton and CI, settings, a synthetic meter data generator, energy calculations, a common model interface with a labelled test adapter, and adapters for Google Gemini and Nebius. Nothing else exists yet. Planned next: the energy analyst agent, then an MCP server, multi-agent workflows, the database and API, authentication, the customer interface, administration, data and forecasting, voice, and Azure deployment, in that order. The planned agents are described in agents.md.
