@@ -24,6 +24,10 @@ The next small pieces of work, in order. Each item should fit in one pull reques
 
 9. Agent uses the tool through MCP. Done when the agent answers from tool results and a test shows it cannot read a site outside the caller's access. Partly done in issue #42: the analyst fetches its fact sheet through the server, the spec's server and tool lists and the read-only requirement are enforced and tested, tool calls appear in the trace, and a direct path is kept for comparison. Not done: the test that it cannot read a site outside the caller's access, because there is no caller or sign-in yet, so that waits for the authentication phase. Today the only limit is the server's fixed list of two demo sites. It has also not yet been run against a real model through MCP.
 
+## Phase 1 follow-ups
+
+10. Report writer agent and agent registry. A second agent on a shared pipeline, an `AGENTS` registry capped at five, an API and playground that run either agent, and `live_eval --agent report-writer`. Done when scripted evaluation cases pass, the API refuses input that does not fit the agent, and the playground works in a real browser. Built on the branch `overnight/2026-10-27` and not yet merged. Not done: no real model has run the report writer, so its prompt is untested against Gemini or Nebius, and the first live run will probably find wording problems the way the analyst's did. The live cases cover both audiences and both demo sites but not a site with missing readings, because that needs custom data and only the scripted evaluation covers it.
+
 ## Later phases
 
 The remaining agents, the order they are built in and the rules they follow are described in [agents.md](agents.md).
