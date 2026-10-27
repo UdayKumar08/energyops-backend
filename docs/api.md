@@ -1,0 +1,13 @@
+# Local API
+
+The local API lets a screen, or curl, try the agents without any of the production machinery. It exists so that the agent playground page can be built against something real, and it is meant to run on a developer's own computer and nowhere else. There is no sign-in yet, so it protects itself in three ways. It refuses to be created unless the environment is `local`, `python -m energyops.api` listens on 127.0.0.1 only and has no option to change that, and it answers only requests whose Host header is `127.0.0.1` or `localhost`, which stops a web page on another site from reaching it through DNS rebinding. When real authentication arrives these guards stay, and a deployed API becomes a separate piece of work.
+
+Start it with `uv run python -m energyops.api` (add `--port 8001` to change the port), then open http://127.0.0.1:8000/docs for the generated reference. It needs no database. It reads provider keys from your local `.env` each time they are needed, so adding a key does not require a restart.
+
+The endpoints are small. `GET /health` reports the environment. `GET /providers` lists the model choices and whether each one has a key, without ever showing the key. `GET /agents` and `GET /agents/{id}` return the registry fields of an agent (name, domain, status, capabilities, model, prompt version) and, for one agent, its full spec, its prompt text with a fingerprint, and any guardrails the spec switches on that are not implemented. `POST /agents/{id}/runs` runs an agent once with a question, an optional site, a provider and an optional exact model name, and returns the full run record with its trace. `GET /runs` and `GET /runs/{id}` read finished runs back.
+
+The provider defaults to `test`, the labelled test adapter. It makes no network call and returns a canned correct answer, and its runs are recorded with the provider `test-adapter`, so a screen can be built and tried for free and its output can never be mistaken for a real model's. Choosing `gemini` or `nebius` makes a real call and uses a little free quota. If the key is missing the API answers 503 and names the setting to add.
+
+A run that fails its checks, for example because the model invented a figure or the provider was unavailable, is a normal result. The API answers 200 with a record whose status is `failed` and whose `error_kind` says why. HTTP errors are kept for problems with the request itself.
+
+Run records are held in memory, the newest 200, and are lost when the server stops. Storing them in the database is part of the backend phase. The agent list is a fixed dictionary in `energyops/api/app.py` with one entry, and it generalises when the second agent exists.
