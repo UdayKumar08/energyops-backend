@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 
+import httpx
 import psycopg
 import pytest
 import pytest_asyncio
@@ -102,3 +103,22 @@ async def owner_db(migrated_db: str) -> AsyncIterator[Database]:
         yield database
     finally:
         await database.dispose()
+
+
+@pytest_asyncio.fixture
+async def seeded(db: Database) -> Database:
+    """The test database with the invented demo organisations, people, readings and tariffs."""
+    from energyops.db.seed import seed_demo
+
+    await seed_demo(db)
+    return db
+
+
+@pytest_asyncio.fixture
+async def api(seeded: Database) -> AsyncIterator[httpx.AsyncClient]:
+    """A client for the platform API, talking to the app in process."""
+    from service_helpers import make_app
+
+    transport = httpx.ASGITransport(app=make_app(seeded))
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        yield client

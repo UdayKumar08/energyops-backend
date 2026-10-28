@@ -22,7 +22,7 @@ from energyops.models.credentials import ProviderKeys
 from energyops.security.permissions import Forbidden
 from energyops.security.tokens import TokenVerifier
 from energyops.security.verifier import local_tokens_from, verifier_from
-from energyops.service import routes_admin, routes_agents, routes_basic
+from energyops.service import routes_admin, routes_agents, routes_basic, routes_org
 from energyops.service.state import ClientFactory, ServiceState
 
 LOCAL_HOSTS = ["127.0.0.1", "localhost", "testserver"]
@@ -77,5 +77,6 @@ def create_service_app(
 
     app.include_router(routes_basic.router)
     app.include_router(routes_agents.router)
+    app.include_router(routes_org.router)
     app.include_router(routes_admin.router)
     return app

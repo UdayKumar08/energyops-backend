@@ -8,13 +8,10 @@ database or the MCP tools an agent uses.
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator
-from typing import Any
 
 import httpx
 import jwt
 import pytest
-import pytest_asyncio
 from mcp import Client
 from pydantic import SecretStr
 from sqlalchemy import text
@@ -23,49 +20,24 @@ from conftest import APP_URL
 from energyops.agents.registry import AGENTS
 from energyops.config import Settings
 from energyops.db import repo
-from energyops.db.seed import seed_demo
 from energyops.db.session import Database, Scope
 from energyops.models.test_adapter import TestAdapter
 from energyops.security.auth import authenticate
-from energyops.security.tokens import Claims, LocalTokens
+from energyops.security.tokens import Claims
 from energyops.service.app import create_service_app
 from energyops.service.data import SiteNotFound, load_site, sources_for
-
-SECRET = SecretStr("s" * 48)
-TOKENS = LocalTokens(SECRET)
-
-ADMIN = "admin@harbour.example"
-MANAGER = "manager@harbour.example"
-TECH = "tech@harbour.example"  # limited to demo-hotel
-VIEWER = "viewer@harbour.example"
-NORTH = "admin@northside.example"
-PLATFORM = "platform@energyops.example"
-
-
-def settings() -> Settings:
-    return Settings(database_url=SecretStr(APP_URL), local_jwt_secret=SECRET)
-
-
-def make_app(db: Database, **kwargs: Any) -> Any:
-    return create_service_app(settings(), db=db, **kwargs)
-
-
-@pytest_asyncio.fixture
-async def seeded(db: Database) -> Database:
-    await seed_demo(db)
-    return db
-
-
-@pytest_asyncio.fixture
-async def api(seeded: Database) -> AsyncIterator[httpx.AsyncClient]:
-    transport = httpx.ASGITransport(app=make_app(seeded))
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        yield client
-
-
-def as_user(email: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {TOKENS.issue(email)}"}
-
+from service_helpers import (
+    ADMIN,
+    MANAGER,
+    NORTH,
+    PLATFORM,
+    SECRET,
+    TECH,
+    TOKENS,
+    VIEWER,
+    as_user,
+    make_app,
+)
 
 # ------------------------------------------------------------------ signing in
 

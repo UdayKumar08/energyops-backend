@@ -33,3 +33,7 @@ The seed creates two invented organisations so that isolation can be seen: Harbo
 ## What is not done
 
 Row level security covers the tables above, but LangGraph's own checkpoint tables (added with the supervisor) are not protected by it, so access to a saved conversation is checked in code. All times are UTC. The migration tests run the migration up and down on an empty database but have not been run against Azure Database for PostgreSQL, where the extension is enabled through an allow list and roles are managed differently.
+
+## Usage totals for the platform
+
+Platform staff cannot read customer rows, and runs are customer rows. They still need to see how much the product is used, so migration 0002 adds one function, `platform_usage(since)`. It runs with its owner's rights, checks the platform setting itself, and returns only counts and token totals per organisation, agent and day: no inputs, outputs, site names or people. A session for an organisation, or one with no scope at all, gets an empty result, and a test checks both. Token counts are what the provider reported, or an estimate where it did not, and are not a bill.

@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Collection, Sequence
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import Date, cast, delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -421,3 +422,100 @@ async def set_agent_overrides(
             },
         )
     )
+
+
+# ------------------------------------------------------------------ usage, people and audit views
+
+
+@dataclass(frozen=True, slots=True)
+class UsageRow:
+    org_id: uuid.UUID
+    agent_id: str
+    day: date
+    runs: int
+    failed: int
+    input_tokens: int
+    output_tokens: int
+
+
+async def platform_usage(session: AsyncSession, since: datetime) -> list[UsageRow]:
+    """Counts and token totals for every organisation. Returns nothing unless the session is
+    platform scoped, and never anything but counts (see migration 0002)."""
+    rows = await session.execute(
+        text("select * from platform_usage(:since) order by day desc, org_id, agent_id"),
+        {"since": since},
+    )
+    return [
+        UsageRow(
+            r.org_id, r.agent_id, r.day, r.runs, r.failed, int(r.input_tokens), int(r.output_tokens)
+        )
+        for r in rows
+    ]
+
+
+async def org_usage(session: AsyncSession, org_id: uuid.UUID, since: datetime) -> list[UsageRow]:
+    """The same counts for one organisation, from its own runs."""
+    day = cast(func.timezone("UTC", Run.started_at), Date)
+    rows = await session.execute(
+        select(
+            Run.agent_id,
+            day.label("day"),
+            func.count(),
+            func.count().filter(Run.status == "failed"),
+            func.coalesce(func.sum(Run.input_tokens), 0),
+            func.coalesce(func.sum(Run.output_tokens), 0),
+        )
+        .where(Run.org_id == org_id, Run.started_at >= since)
+        .group_by(Run.agent_id, day)
+        .order_by(day.desc(), Run.agent_id)
+    )
+    return [UsageRow(org_id, a, d, int(n), int(f), int(i), int(o)) for a, d, n, f, i, o in rows]
+
+
+async def list_organizations(session: AsyncSession) -> list[Organization]:
+    return list((await session.execute(select(Organization).order_by(Organization.name))).scalars())
+
+
+async def list_users(session: AsyncSession, org_id: uuid.UUID | None) -> list[User]:
+    """People of one organisation, or the platform's own staff when `org_id` is None."""
+    query = select(User).order_by(User.display_name)
+    query = query.where(User.org_id == org_id) if org_id else query.where(User.org_id.is_(None))
+    return list((await session.execute(query)).scalars())
+
+
+async def get_user(session: AsyncSession, user_id: uuid.UUID) -> User | None:
+    return (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+
+
+async def set_site_access(
+    session: AsyncSession, org_id: uuid.UUID, user: User, site_ids: Sequence[uuid.UUID] | None
+) -> None:
+    """Limit a person to some sites, or give them every site with None."""
+    await session.execute(delete(UserSiteAccess).where(UserSiteAccess.user_id == user.id))
+    user.all_sites = site_ids is None
+    for site_id in site_ids or ():
+        session.add(UserSiteAccess(user_id=user.id, site_id=site_id, org_id=org_id))
+    await session.flush()
+
+
+async def count_active_admins(session: AsyncSession, org_id: uuid.UUID) -> int:
+    return (
+        await session.execute(
+            select(func.count()).where(
+                User.org_id == org_id, User.role == "org_admin", User.is_active.is_(True)
+            )
+        )
+    ).scalar_one()
+
+
+async def list_audit(
+    session: AsyncSession, *, org_id: uuid.UUID | None, limit: int = 100
+) -> list[AuditEvent]:
+    """The audit events of one organisation, or the platform's own (those with no organisation)."""
+    query = select(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(limit)
+    query = (
+        query.where(AuditEvent.org_id == org_id)
+        if org_id
+        else query.where(AuditEvent.org_id.is_(None))
+    )
+    return list((await session.execute(query)).scalars())
