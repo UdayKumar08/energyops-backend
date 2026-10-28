@@ -42,7 +42,11 @@ class Settings(BaseSettings):
 
     environment: Environment = Environment.LOCAL
     data_mode: DataMode = DataMode.DEMO
+    # The application's connection: a restricted role that owns nothing, so row level security
+    # applies to it.
     database_url: SecretStr
+    # The owner role, used only to run migrations and the seed script. Never by the running API.
+    admin_database_url: SecretStr | None = None
     local_jwt_secret: SecretStr | None = None
     log_level: str = "INFO"
 

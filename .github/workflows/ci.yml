@@ -16,7 +16,23 @@ jobs:
   checks:
     name: Lint, types and tests
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    env:
+      # A missing test database is a failure in CI, not a skipped test.
+      ENERGYOPS_REQUIRE_DB: "1"
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
     steps:
       - name: Check out the code
         uses: actions/checkout@v7
@@ -29,6 +45,9 @@ jobs:
 
       - name: Install dependencies from the lock file
         run: uv sync --locked
+
+      - name: Create the test roles, databases and extension
+        run: psql "postgresql://postgres:postgres@127.0.0.1:5433/postgres" -v ON_ERROR_STOP=1 -f docker/initdb/01_local_roles.sql
 
       - name: Lint
         run: uv run ruff check .

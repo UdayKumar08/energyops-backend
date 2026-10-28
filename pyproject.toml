@@ -37,6 +37,7 @@ dev = [
     "httpx2>=2.16.0",
     "mypy>=2.4.0",
     "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.1",
     "ruff>=0.17.3",
 ]
 
@@ -48,6 +49,10 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
 
+[tool.ruff.lint.per-file-ignores]
+# Generated and SQL-heavy: long lines are normal here.
+"src/energyops/db/migrations/**" = ["E501"]
+
 [tool.mypy]
 python_version = "3.13"
 strict = true
@@ -56,3 +61,6 @@ files = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = ["db: needs the test PostgreSQL database (see compose.yaml)"]
