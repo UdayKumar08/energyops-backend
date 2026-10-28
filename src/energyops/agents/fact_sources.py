@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import sys
 import time
+from collections.abc import Sequence
 from typing import Any, Protocol
 
 from mcp import Client, StdioServerParameters
@@ -65,7 +66,10 @@ def energy_server_command() -> StdioServerParameters:
     )
 
 
-class McpFactSheets:
+class McpToolSource:
+    """What every MCP-backed fact source shares: the permission checks, the read-only check on
+    each tool, the site lookup and the traced tool calls."""
+
     via = "mcp"
 
     def __init__(
@@ -76,31 +80,34 @@ class McpFactSheets:
         self._target = target if target is not None else energy_server_command()
         self._server_name = server_name
 
-    async def __call__(self, site: str | None, trace: TraceRecorder) -> FactSheet:
+    def _guard(self, site: str | None, tools: Sequence[str]) -> list[str]:
+        """Refuse a server or tool the spec does not name. Returns every tool that will be used."""
         if self._server_name not in self._servers:
             raise ToolAccessError(f"this agent may not use the MCP server '{self._server_name}'")
-        needed = ["get_fact_sheet"] if site else ["list_sites", "get_fact_sheet"]
+        needed = [*tools] if site else ["list_sites", *tools]
         not_allowed = [tool for tool in needed if tool not in self._allowed]
         if not_allowed:
             raise ToolAccessError(f"this agent may not use the tools: {', '.join(not_allowed)}")
+        return needed
 
-        outcome = await self._fetch(site, needed, trace)
-        # Raised here, outside the client's own context, so the SDK cannot wrap them in a group.
-        kind, payload = outcome
+    @staticmethod
+    def _raise_failure(kind: str, payload: Any) -> None:
+        """Turn a failed outcome into the exception the agent understands. Called outside the
+        client's context so the SDK cannot wrap it in an exception group."""
         if kind == UNKNOWN_SITE:
             raise LookupError(payload)
         if kind == UNUSABLE_DATA:
             raise EnergyDataError(payload)
-        if kind != "ok":
-            raise ToolAccessError(payload)
-        try:
-            return FactSheetModel.model_validate(payload).to_fact_sheet()
-        except (ValidationError, ValueError):
-            raise ToolAccessError("the tool returned a fact sheet in an unexpected shape") from None
+        raise ToolAccessError(payload)
 
     async def _fetch(
-        self, site: str | None, needed: list[str], trace: TraceRecorder
+        self,
+        site: str | None,
+        needed: list[str],
+        trace: TraceRecorder,
+        tools: Sequence[str] = ("get_fact_sheet",),
     ) -> tuple[str, Any]:
+        """Call each of `tools` for the site. On success the payload maps tool name to result."""
         try:
             async with Client(self._target) as client:
                 offered = {tool.name: tool for tool in (await client.list_tools()).tools}
@@ -123,7 +130,13 @@ class McpFactSheets:
                     chosen = payload.get("default_site") if isinstance(payload, dict) else None
                     if not isinstance(chosen, str) or not chosen:
                         return "error", "list_sites did not name a default site"
-                return await self._call(client, trace, "get_fact_sheet", {"site": chosen})
+                results: dict[str, Any] = {}
+                for name in tools:
+                    kind, payload = await self._call(client, trace, name, {"site": chosen})
+                    if kind != "ok":
+                        return kind, payload
+                    results[name] = payload
+                return "ok", results
         except TimeoutError:
             raise
         except Exception as exc:  # the SDK, the subprocess or the pipe failed
@@ -160,3 +173,15 @@ class McpFactSheets:
         if result.structured_content is None:
             return "error", f"the tool '{tool}' returned no structured result"
         return "ok", result.structured_content
+
+
+class McpFactSheets(McpToolSource):
+    async def __call__(self, site: str | None, trace: TraceRecorder) -> FactSheet:
+        needed = self._guard(site, ["get_fact_sheet"])
+        kind, payload = await self._fetch(site, needed, trace)
+        if kind != "ok":
+            self._raise_failure(kind, payload)
+        try:
+            return FactSheetModel.model_validate(payload["get_fact_sheet"]).to_fact_sheet()
+        except (ValidationError, ValueError):
+            raise ToolAccessError("the tool returned a fact sheet in an unexpected shape") from None
