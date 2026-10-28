@@ -56,9 +56,17 @@ def parse_json_reply[T: BaseModel](text: str, output_type: type[T], shape: str) 
     start, end = body.find("{"), body.rfind("}")
     if start == -1 or end < start:
         raise ReplyShapeError(f"the reply was not a single JSON object like {shape}")
+    candidate = body[start : end + 1]
     try:
-        data = json.loads(body[start : end + 1])
+        data = json.loads(candidate)
     except json.JSONDecodeError as exc:
+        if exc.pos >= len(candidate):
+            # Seen in a real run: a model left off the final closing brace. The parser's own
+            # message ("Expecting ',' delimiter") does not tell a model what to fix.
+            raise ReplyShapeError(
+                "the reply was not valid JSON (it ends before the object is closed, so check "
+                "that every [ and { has its closing ] and })"
+            ) from exc
         raise ReplyShapeError(f"the reply was not valid JSON ({exc.msg})") from exc
     try:
         return output_type.model_validate(data)

@@ -226,3 +226,27 @@ def test_through_mcp_the_spec_decides_which_tools_may_be_used() -> None:
     )
     refused = investigate(TestAdapter(GOOD), facts=via_mcp(no_server), spec=no_server)
     assert refused.error_kind == "tool_error" and "may not use the MCP server" in refused.error
+
+
+def test_a_reply_missing_its_final_brace_gets_a_message_that_says_what_to_fix() -> None:
+    # The same shape a real model produced twice in a live run: valid up to the last "}".
+    cut = GOOD.rstrip()[:-1]
+    assert cut.endswith("]") and not cut.endswith("}")
+    told: list[str] = []
+
+    class Spy(TestAdapter):
+        async def complete(self, request: ModelRequest) -> ModelResponse:
+            told.append(request.messages[-1].content)
+            return await super().complete(request)
+
+    record = investigate(Spy(replies=(cut, GOOD)))
+    assert record.status is RunStatus.SUCCEEDED and record.attempts == 2
+    assert "ends before the object is closed" in told[1]
+    assert "Expecting" not in told[1]
+
+
+def test_other_json_mistakes_keep_the_parsers_own_reason() -> None:
+    broken = GOOD.replace('"confidence"', "confidence", 1)  # a key without quotes, mid-reply
+    record = investigate(TestAdapter(broken))
+    assert record.error_kind == "invalid_output" and "not valid JSON (" in (record.error or "")
+    assert "ends before the object is closed" not in (record.error or "")
