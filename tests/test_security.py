@@ -222,3 +222,69 @@ def test_only_managers_and_up_approve_tickets_and_change_tariffs() -> None:
 
 def test_a_viewer_cannot_run_agents() -> None:
     assert Permission.RUN_AGENTS not in ROLE_PERMISSIONS["viewer"]
+
+
+# ------------------------------------------------------------------ fetching the signing keys
+
+
+def _jwks_for(*pairs: tuple[str, Any]) -> bytes:
+    import json
+
+    keys = []
+    for kid, private in pairs:
+        jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private.public_key()))
+        jwk.update({"kid": kid, "use": "sig", "alg": "RS256"})
+        keys.append(jwk)
+    return json.dumps({"keys": keys}).encode()
+
+
+@pytest.fixture
+def jwks_server() -> Any:
+    """A tiny local web server that serves a key set, standing in for Microsoft's."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    body = _jwks_for(("key-a", KEY), ("key-b", OTHER_KEY))
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: Any) -> None:  # keep test output quiet
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}/keys"
+    server.shutdown()
+    thread.join(timeout=5)
+
+
+async def test_the_key_provider_picks_the_key_the_token_names(jwks_server: str) -> None:
+    from energyops.security.tokens import JwksKeyProvider
+
+    verifier = EntraTokens(tenant_id=TENANT, client_id=CLIENT, keys=JwksKeyProvider(jwks_server))
+    now = int(time.time())
+    claims = {
+        "iss": f"https://login.microsoftonline.com/{TENANT}/v2.0",
+        "aud": CLIENT,
+        "tid": TENANT,
+        "oid": "object-1",
+        "ver": "2.0",
+        "scp": "access_as_user",
+        "exp": now + 600,
+    }
+    signed_by_b = jwt.encode(claims, OTHER_KEY, algorithm="RS256", headers={"kid": "key-b"})
+    assert (await verifier.verify(signed_by_b)).subject == "object-1"
+    # Signed by one key but naming the other key's id: the signature check must fail.
+    lying = jwt.encode(claims, KEY, algorithm="RS256", headers={"kid": "key-b"})
+    with pytest.raises(TokenError):
+        await verifier.verify(lying)
+    # A key id the provider has never published is refused, not guessed at.
+    unknown = jwt.encode(claims, KEY, algorithm="RS256", headers={"kid": "key-zzz"})
+    with pytest.raises(TokenError):
+        await verifier.verify(unknown)

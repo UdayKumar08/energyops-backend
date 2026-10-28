@@ -27,3 +27,5 @@ Forecasting, searching a knowledge base, voice and ticket preparation are capabi
 ## Build order
 
 The energy analyst, then the report writer, then the anomaly investigator, then the savings advisor, then the supervisor. All five are built. The first four share one pipeline (`energyops/agents/pipeline.py`) that fetches the fact sheet, makes one model call, checks the shape and every figure in Python, and sends a rejected answer back once with the reasons. A new agent supplies only its prompt message, its output shape and its own checks, and is added as one entry in `energyops/agents/registry.py`, which refuses to hold more than five. All five are still drafts, and none of the four newest has been run against a real model.
+
+Platform administrators can edit each agent's settings, try it with the test adapter or a real provider, and reset it to its defaults from the web app. The settings are limited to what an agent's specification allows, and an agent is only available to customers once an administrator switches it on.

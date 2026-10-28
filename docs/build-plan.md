@@ -29,3 +29,5 @@ The browser never talks to the backend directly. The Next.js server keeps the se
 ## Order of work
 
 The savings advisor and the confidence change come first because they complete the agent set. The database and tenancy layer follows, then sign-in and the platform API with the isolation tests, then run storage and the admin settings. The supervisor and the approval graph come next, then data upload, forecasting and knowledge search. The web application is built after the API it needs exists, and the Azure files and the final documentation come last.
+
+What happened differently from this plan is in [status.md](status.md).

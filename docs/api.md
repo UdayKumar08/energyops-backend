@@ -18,6 +18,16 @@ Opening http://127.0.0.1:8000/ takes you to a plain page at `/playground` that u
 
 The page is three static files in `energyops/api/static` with no framework and nothing loaded from other sites. It is served with a strict Content-Security-Policy, only its own two assets can be fetched, and the script inserts everything that came from the server or a model as text, never as markup, so a hostile model reply cannot run code in the page. It is a stopgap for trying agents. The admin screens will be built properly in the web repository later and will replace it.
 
+## The platform API and the web app
+
+The platform API (`python -m energyops.service`) is the one the web app uses, and it is separate from the local playground API above. It needs a database and a signed-in person on every route except `GET /health` and, in the local environment only, `POST /auth/dev-login`. Its full description is generated from the code: `uv run python -m energyops.service.openapi web/openapi.json` writes it, the web app's types are generated from that file, and a test fails if the committed copy is out of date. Serve it locally and open `/docs` for the readable version.
+
+The routes fall into groups: the signed-in person (`/me`), sites with their summaries, series, anomalies, tariff, forecast and uploads, the assistant (`/assistant/ask`), tickets and their decisions, knowledge documents and search, people and sites management for organisation administrators, usage and audit for the organisation, and the platform staff routes under `/admin` (agents and their settings, a playground for trying an agent, organisations, usage and audit across organisations). Platform staff can reach none of a customer's readings, documents or tickets.
+
+Sign-in is checked on every request. Outside the local environment only Microsoft Entra access tokens are accepted. The local environment accepts short tokens that the backend itself issues for a seeded person. The token proves who someone is; their organisation, role and sites come from the database.
+
+The web app calls these routes only from its server side. Its proxy route refuses paths for sign-in, health, the documentation and the API description, and refuses writes that do not come from the app's own origin.
+
 ## Uploading readings, forecasting and knowledge search
 
 These routes belong to the platform API, not the local playground API, and every one needs a signed-in person whose role allows it.

@@ -36,6 +36,24 @@ The next small pieces of work, in order. Each item should fit in one pull reques
 
 14. Savings advisor agent. A fourth agent over a tariff and savings module in plain Python, with a fourth read-only MCP tool. Done when scripted cases show amounts checked against the sheet, money refused unless called an estimate and given as a range, promises refused, and a site with no tariff failing as `no_tariff`. Done on the build branch. Not done: no real model has run it, the assumed shares (10 to 20 percent of night load, 5 to 10 percent of peak and of shiftable use, half to all of the spike energy) are plain assumptions and not calibrated to any building, all times are UTC, and the tariffs for the demo sites are invented.
 
+## The long build (branch build/full-platform)
+
+15. Database and tenancy, sign-in checks, the platform API with isolation tests, run storage and administrator settings, the supervisor and the approval graph, uploads, forecasting and knowledge search, the web app, Dockerfiles and the Azure files were all built on one branch with no pull request. [status.md](status.md) is the record of what each of them has and has not been shown to do. Done means the tests named there pass and CI passed on GitHub for the commit.
+
+## Not done, in rough order of value
+
+Run the agents against real models. The report writer, anomaly investigator (prompt v2), savings advisor and supervisor have only scripted tests. Uday has the Gemini and Nebius keys, so the live evaluation commands (`python -m energyops.agents.live_eval --agent <id>` and `python -m energyops.agents.supervisor_evals gemini`) are the next step, followed by reading the answers.
+
+Add the Microsoft Entra sign-in flow to the web app. The API checks Entra tokens (tested with generated keys only), but the web app can only sign in through the local development route. Without this the deployed web app cannot be used.
+
+Build the images and apply the Terraform in a throwaway subscription, fix what breaks, then validate with `terraform validate` and `terraform plan` in CI. Add alerts and a budget.
+
+Test the bootstrap and migrations against a real Azure Database for PostgreSQL, including the pgvector allow list and a restore from backup. A backup counts as verified only after a restore has been tested.
+
+Try the OpenAI compatible embedder against one real provider (Gemini's compatible endpoint does not document the `dimensions` field, so the first call may need `ENERGYOPS_EMBEDDINGS_SEND_DIMENSIONS=false`). Add an approximate index only when the database supports filtered scans.
+
+Prompt shield and content safety are not implemented. Row level security does not cover the approval graph's saved state. Local time and daylight saving are not supported; everything is UTC. The last-administrator guard has almost no test. Pin the GitHub actions and base images by digest, pin an exact Gemini model, turn on Dependabot and branch protection.
+
 ## Later phases
 
 The remaining agents, the order they are built in and the rules they follow are described in [agents.md](agents.md).

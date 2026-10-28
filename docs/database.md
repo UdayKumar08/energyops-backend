@@ -25,8 +25,11 @@ Organisations, people (with a role and an optional list of sites), sites, meters
 Start the database with `docker compose up -d db`, then apply the migrations and load the demo data.
 
     export ENERGYOPS_ADMIN_DATABASE_URL=postgresql+psycopg://energyops_owner:energyops_owner@127.0.0.1:5433/energyops_dev
-    uv run alembic upgrade head
-    uv run python -m energyops.db.seed
+    uv run python -m energyops.db.setup --seed
+
+`db.setup` runs every migration, creates LangGraph's tables for the approval flow, and with `--seed` loads the demo data (local only). It is safe to run again. In a deployed environment the same command runs without `--seed` as a manual job (`migrate`).
+
+A brand new server needs its two roles and the pgvector extension first. `python -m energyops.db.bootstrap` does that once, as the server administrator and with passwords passed in the environment, and running it again only resets the passwords. Locally the Docker setup script does the equivalent. The bootstrap is tested against a real PostgreSQL with throwaway roles. It has not been run against Azure, where the administrator is not a superuser, so the membership grant it relies on is untested there.
 
 The seed creates two invented organisations so that isolation can be seen: Harbour Hotels with two sites and four people, and Northside Health with one site and two people, each with 28 days of invented readings and an invented tariff, plus one platform account. It only runs in the local environment and can be run twice safely.
 

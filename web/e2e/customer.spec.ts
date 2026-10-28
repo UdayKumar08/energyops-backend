@@ -165,3 +165,54 @@ test("on a phone the menu is folded away until it is opened", async ({ page }) =
   await page.getByRole("button", { name: "Close menu" }).click();
   await expect(nav).toBeHidden();
 });
+
+// These tests replace the browser's speech recognition with a stand-in, because a headless
+// browser has no microphone. They check our code's handling of what the browser reports, not
+// that any real speech is recognised.
+const fakeRecognition = (behaviour: "hears" | "blocked") => `
+  class FakeRecognition {
+    start() {
+      setTimeout(() => {
+        if ("${behaviour}" === "hears") {
+          this.onresult({ results: [[{ transcript: "how much could we save on our bill" }]] });
+        } else {
+          this.onerror({ error: "not-allowed" });
+        }
+        this.onend();
+      }, 20);
+    }
+    stop() { this.onend && this.onend(); }
+  }
+  window.SpeechRecognition = FakeRecognition;
+  window.webkitSpeechRecognition = FakeRecognition;
+`;
+
+test("speaking fills in the question, and the page says the browser may send audio away", async ({ page }) => {
+  await page.addInitScript(fakeRecognition("hears"));
+  await signIn(page, HARBOUR_MANAGER);
+  await page.goto("/assistant");
+  await expect(page.getByText(/may send the audio to the browser/)).toBeVisible();
+  await page.getByRole("button", { name: "Speak" }).click();
+  await expect(page.getByLabel("Your question")).toHaveValue("how much could we save on our bill");
+});
+
+test("a blocked microphone is explained and typing still works", async ({ page }) => {
+  await page.addInitScript(fakeRecognition("blocked"));
+  await signIn(page, HARBOUR_MANAGER);
+  await page.goto("/assistant");
+  await page.getByRole("button", { name: "Speak" }).click();
+  await expect(page.getByText(/microphone is blocked/)).toBeVisible();
+  await page.getByLabel("Your question").fill("Write me a poem about winter.");
+  await expect(page.getByRole("button", { name: "Ask", exact: true })).toBeEnabled();
+});
+
+test("without speech support the page says so and offers typing", async ({ page }) => {
+  await page.addInitScript(`
+    delete window.SpeechRecognition;
+    delete window.webkitSpeechRecognition;
+  `);
+  await signIn(page, HARBOUR_MANAGER);
+  await page.goto("/assistant");
+  await expect(page.getByText("Voice input is not available in this browser. Type your question.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Speak" })).toHaveCount(0);
+});
