@@ -27,6 +27,8 @@ from energyops.service import tickets_service
 from energyops.service.data import SiteData, SiteNotFound, load_site, sources_for
 from energyops.service.deps import needs, state_of
 from energyops.service.routes_agents import resolve_agent, run_for_caller
+from energyops.service.routes_data import forecast_for
+from energyops.service.routes_knowledge import search_knowledge
 from energyops.service.state import ServiceState
 
 router = APIRouter()
@@ -88,11 +90,30 @@ def tools_for(
         ticket, _ = found
         return {"ticket_id": str(ticket.id), "title": ticket.title, "status": ticket.status}
 
+    async def forecast() -> dict[str, Any]:
+        try:
+            view = await forecast_for(state, principal, site_data.site.slug, 7)
+        except HTTPException as exc:
+            raise ToolRefused(str(exc.detail)) from None
+        # The chart points stay out of the answer: the daily figures and the test say it all.
+        return view.model_dump(mode="json", exclude={"points"})
+
+    async def knowledge(question: str) -> dict[str, Any]:
+        if state.embedder is None:
+            raise ToolRefused("Knowledge search is not set up.")
+        try:
+            found = await search_knowledge(state, principal, question)
+        except HTTPException as exc:
+            raise ToolRefused(str(exc.detail)) from None
+        return found.model_dump(mode="json")
+
     tools = SupervisorTools(
         permissions=principal.permissions,
         run_agent=run_agent,
         events=events,
         draft_ticket=draft_ticket,
+        forecast=forecast,
+        knowledge=knowledge,
         site=site_data.site.slug,
     )
     return tools, children

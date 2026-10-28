@@ -9,6 +9,7 @@ from energyops.api.providers import ProviderId, make_client
 from energyops.config import Environment
 from energyops.db.checkpoint import Checkpointing
 from energyops.db.session import Database
+from energyops.knowledge import Embedder
 from energyops.models.base import ModelClient
 from energyops.models.credentials import ProviderKeys
 from energyops.security.tokens import LocalTokens, TokenVerifier
@@ -27,7 +28,12 @@ class ServiceState:
     client_factory: ClientFactory = make_client
     # The approval graph's saved state; opened on first use.
     checkpointing: Checkpointing | None = None
+    # Turns text into vectors for knowledge search; None means knowledge search is switched off.
+    embedder: Embedder | None = None
 
     async def close(self) -> None:
         if self.checkpointing is not None:
             await self.checkpointing.close()
+        close = getattr(self.embedder, "aclose", None)
+        if close is not None:
+            await close()

@@ -22,7 +22,7 @@ Raising a ticket is the one thing the supervisor can start that changes anything
 
 ## What is not an agent
 
-Forecasting, searching a knowledge base, voice and ticket preparation are capabilities, not agents. The supervisor can send a question to forecasting or knowledge search, voice is a way of talking to the supervisor, and tickets are drafts that a person approves.
+Forecasting, searching a knowledge base, voice and ticket preparation are capabilities, not agents. Forecasting (`energyops/forecast.py`) and knowledge search (`energyops/knowledge.py`) are built and described in api.md; the supervisor can send a question to either, voice is a way of talking to the supervisor, and tickets are drafts that a person approves.
 
 ## Build order
 

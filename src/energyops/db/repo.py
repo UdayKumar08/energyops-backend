@@ -19,6 +19,9 @@ from energyops.agents.runs import RunRecord
 from energyops.db.models import (
     AgentSetting,
     AuditEvent,
+    Chunk,
+    Document,
+    Ingestion,
     Meter,
     Organization,
     Reading,
@@ -204,6 +207,25 @@ async def reading_range(
         )
     ).one()
     return (row[0], row[1]) if row[0] is not None else None
+
+
+async def count_readings_between(
+    session: AsyncSession, org_id: uuid.UUID, meter_id: uuid.UUID, first: datetime, last: datetime
+) -> int:
+    return int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(Reading)
+                .where(
+                    Reading.org_id == org_id,
+                    Reading.meter_id == meter_id,
+                    Reading.ts >= first,
+                    Reading.ts <= last,
+                )
+            )
+        ).scalar_one()
+    )
 
 
 async def load_readings(
@@ -617,3 +639,168 @@ async def user_names(session: AsyncSession, ids: Collection[uuid.UUID]) -> dict[
         return {}
     rows = await session.execute(select(User.id, User.display_name).where(User.id.in_(ids)))
     return {i: n for i, n in rows}
+
+
+# ------------------------------------------------------------------ uploads and knowledge
+
+
+async def record_ingestion(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    site_id: uuid.UUID,
+    meter_id: uuid.UUID,
+    uploaded_by: uuid.UUID | None,
+    filename: str | None,
+    sha256: str,
+    byte_size: int,
+    row_count: int,
+    first_ts: datetime,
+    last_ts: datetime,
+) -> Ingestion:
+    row = Ingestion(
+        org_id=org_id,
+        site_id=site_id,
+        meter_id=meter_id,
+        uploaded_by=uploaded_by,
+        filename=filename,
+        sha256=sha256,
+        byte_size=byte_size,
+        row_count=row_count,
+        first_ts=first_ts,
+        last_ts=last_ts,
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+async def list_ingestions(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    only: Collection[uuid.UUID] | None,
+    limit: int = 50,
+) -> list[tuple[Ingestion, Site]]:
+    query = (
+        select(Ingestion, Site)
+        .join(Site, Site.id == Ingestion.site_id)
+        .where(Ingestion.org_id == org_id)
+        .order_by(Ingestion.created_at.desc())
+        .limit(limit)
+    )
+    if only is not None:
+        query = query.where(Ingestion.site_id.in_(only))
+    return [(i, s) for i, s in (await session.execute(query)).all()]
+
+
+async def create_document(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    title: str,
+    filename: str | None,
+    byte_size: int,
+    embedder: str,
+    uploaded_by: uuid.UUID | None,
+    passages: Sequence[str],
+    vectors: Sequence[Sequence[float]],
+) -> Document:
+    if len(passages) != len(vectors):
+        raise ValueError("one vector is needed for each passage")
+    document = Document(
+        org_id=org_id,
+        title=title,
+        filename=filename,
+        byte_size=byte_size,
+        chunk_count=len(passages),
+        embedder=embedder,
+        uploaded_by=uploaded_by,
+    )
+    session.add(document)
+    await session.flush()
+    session.add_all(
+        Chunk(
+            org_id=org_id,
+            document_id=document.id,
+            position=position,
+            content=content,
+            embedder=embedder,
+            embedding=list(vector),
+        )
+        for position, (content, vector) in enumerate(zip(passages, vectors, strict=True))
+    )
+    await session.flush()
+    return document
+
+
+async def list_documents(session: AsyncSession, org_id: uuid.UUID) -> list[Document]:
+    rows = await session.execute(
+        select(Document).where(Document.org_id == org_id).order_by(Document.created_at.desc())
+    )
+    return list(rows.scalars())
+
+
+async def get_document(
+    session: AsyncSession, org_id: uuid.UUID, document_id: uuid.UUID
+) -> Document | None:
+    return (
+        await session.execute(
+            select(Document).where(Document.org_id == org_id, Document.id == document_id)
+        )
+    ).scalar_one_or_none()
+
+
+async def delete_document(session: AsyncSession, org_id: uuid.UUID, document_id: uuid.UUID) -> bool:
+    result = await session.execute(
+        delete(Document).where(Document.org_id == org_id, Document.id == document_id)
+    )
+    return bool(result.rowcount)  # type: ignore[attr-defined]
+
+
+@dataclass(frozen=True, slots=True)
+class PassageHit:
+    document_id: uuid.UUID
+    title: str
+    position: int
+    content: str
+    score: float  # cosine similarity, 1 is identical
+
+
+async def search_chunks(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    embedder: str,
+    vector: Sequence[float],
+    limit: int,
+    min_score: float,
+) -> list[PassageHit]:
+    """The closest passages in one organisation made by `embedder`, by exact cosine distance."""
+    distance = Chunk.embedding.cosine_distance(list(vector))
+    rows = await session.execute(
+        select(Chunk, Document.title, distance.label("distance"))
+        .join(Document, Document.id == Chunk.document_id)
+        .where(Chunk.org_id == org_id, Document.org_id == org_id, Chunk.embedder == embedder)
+        .order_by(distance, Chunk.document_id, Chunk.position)
+        .limit(limit)
+    )
+    hits = [
+        PassageHit(c.document_id, title, c.position, c.content, 1.0 - float(d))
+        for c, title, d in rows.all()
+    ]
+    return [h for h in hits if h.score >= min_score]
+
+
+async def count_other_embedder_documents(
+    session: AsyncSession, org_id: uuid.UUID, embedder: str
+) -> int:
+    """Documents that search cannot see because another embedder made their vectors."""
+    return int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(Document)
+                .where(Document.org_id == org_id, Document.embedder != embedder)
+            )
+        ).scalar_one()
+    )

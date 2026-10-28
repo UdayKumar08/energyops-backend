@@ -19,6 +19,7 @@ from energyops.api.providers import make_client
 from energyops.config import Environment, Settings, get_settings
 from energyops.db.checkpoint import Checkpointing
 from energyops.db.session import Database
+from energyops.knowledge import Embedder, make_embedder
 from energyops.models.credentials import ProviderKeys
 from energyops.security.permissions import Forbidden
 from energyops.security.tokens import TokenVerifier
@@ -28,6 +29,8 @@ from energyops.service import (
     routes_agents,
     routes_assistant,
     routes_basic,
+    routes_data,
+    routes_knowledge,
     routes_org,
     routes_tickets,
 )
@@ -43,6 +46,7 @@ def create_service_app(
     verifier: TokenVerifier | None = None,
     keys: Callable[[], ProviderKeys] = ProviderKeys,
     client_factory: ClientFactory = make_client,
+    embedder: Embedder | None = None,
 ) -> FastAPI:
     chosen = settings or get_settings()
     database = db or Database(chosen.database_url.get_secret_value())
@@ -54,6 +58,14 @@ def create_service_app(
         keys=keys,
         client_factory=client_factory,
         checkpointing=Checkpointing(chosen.database_url.get_secret_value()),
+        embedder=embedder
+        or make_embedder(
+            environment=chosen.environment,
+            base_url=chosen.embeddings_base_url,
+            api_key=chosen.embeddings_api_key,
+            model=chosen.embeddings_model,
+            send_dimensions=chosen.embeddings_send_dimensions,
+        ),
     )
 
     @asynccontextmanager
@@ -89,6 +101,8 @@ def create_service_app(
     app.include_router(routes_agents.router)
     app.include_router(routes_assistant.router)
     app.include_router(routes_tickets.router)
+    app.include_router(routes_data.router)
+    app.include_router(routes_knowledge.router)
     app.include_router(routes_org.router)
     app.include_router(routes_admin.router)
     return app

@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -238,6 +239,9 @@ TENANT_TABLES = (
     "tariffs",
     "runs",
     "tickets",
+    "ingestions",
+    "documents",
+    "chunks",
 )
 
 
@@ -275,3 +279,69 @@ class Ticket(Base):
     )
     decided_at: Mapped[datetime | None] = mapped_column()
     decision_note: Mapped[str | None] = mapped_column(Text)
+
+
+class Ingestion(Base):
+    """A record that readings were uploaded: who, which meter, what the file held. The file
+    itself is not kept; the readings it held are in `readings`."""
+
+    __tablename__ = "ingestions"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    site_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sites.id", ondelete="CASCADE"))
+    meter_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("meters.id", ondelete="CASCADE"))
+    uploaded_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    filename: Mapped[str | None] = mapped_column(String(200))
+    sha256: Mapped[str] = mapped_column(String(64))
+    byte_size: Mapped[int] = mapped_column(Integer)
+    row_count: Mapped[int] = mapped_column(Integer)
+    first_ts: Mapped[datetime] = mapped_column()
+    last_ts: Mapped[datetime] = mapped_column()
+    created_at: Mapped[datetime] = created_at()
+
+
+class Document(Base):
+    """A text document an organisation uploaded for knowledge search. Organisation-wide: it is
+    not tied to a site, so site restrictions do not apply to it."""
+
+    __tablename__ = "documents"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    title: Mapped[str] = mapped_column(String(200))
+    filename: Mapped[str | None] = mapped_column(String(200))
+    byte_size: Mapped[int] = mapped_column(Integer)
+    chunk_count: Mapped[int] = mapped_column(Integer)
+    embedder: Mapped[str] = mapped_column(String(120))
+    uploaded_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = created_at()
+
+
+class Chunk(Base):
+    """One passage of a document with its embedding. `embedder` names what produced the vector:
+    vectors from different embedders cannot be compared, so a search only looks at the passages
+    made by the embedder in use."""
+
+    __tablename__ = "chunks"
+    __table_args__ = (UniqueConstraint("document_id", "position"),)
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True
+    )
+    position: Mapped[int] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text)
+    embedder: Mapped[str] = mapped_column(String(120))
+    embedding: Mapped[list[float]] = mapped_column(Vector(768))
