@@ -6,7 +6,7 @@ see, or None for all of them."""
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -89,16 +89,29 @@ async def find_user(
     return None
 
 
-async def allowed_site_ids(session: AsyncSession, user: User) -> frozenset[uuid.UUID] | None:
-    """The sites a person may see, or None for every site of their organisation."""
-    if user.all_sites:
-        return None
+async def get_organization(session: AsyncSession, org_id: uuid.UUID) -> Organization | None:
+    return (
+        await session.execute(select(Organization).where(Organization.id == org_id))
+    ).scalar_one_or_none()
+
+
+async def site_ids_for(
+    session: AsyncSession, org_id: uuid.UUID, user_id: uuid.UUID
+) -> frozenset[uuid.UUID]:
+    """The sites a person limited to some sites may see. Read inside their own organisation."""
     rows = await session.execute(
         select(UserSiteAccess.site_id).where(
-            UserSiteAccess.user_id == user.id, UserSiteAccess.org_id == user.org_id
+            UserSiteAccess.user_id == user_id, UserSiteAccess.org_id == org_id
         )
     )
     return frozenset(rows.scalars())
+
+
+async def allowed_site_ids(session: AsyncSession, user: User) -> frozenset[uuid.UUID] | None:
+    """The sites a person may see, or None for every site of their organisation."""
+    if user.all_sites or user.org_id is None:
+        return None
+    return await site_ids_for(session, user.org_id, user.id)
 
 
 # ------------------------------------------------------------------ sites and meters
@@ -325,18 +338,34 @@ async def save_run(
 
 
 async def list_runs(
-    session: AsyncSession, org_id: uuid.UUID, *, agent_id: str | None = None, limit: int = 50
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    agent_id: str | None = None,
+    only_sites: Collection[str] | None = None,
+    limit: int = 50,
 ) -> list[Run]:
+    """Runs of one organisation, newest first. `only_sites` limits them to runs for those sites,
+    for a person who may not see every site."""
     query = select(Run).where(Run.org_id == org_id).order_by(Run.started_at.desc()).limit(limit)
     if agent_id is not None:
         query = query.where(Run.agent_id == agent_id)
+    if only_sites is not None:
+        query = query.where(Run.site_slug.in_(only_sites))
     return list((await session.execute(query)).scalars())
 
 
-async def get_run(session: AsyncSession, org_id: uuid.UUID, run_id: uuid.UUID) -> Run | None:
-    return (
-        await session.execute(select(Run).where(Run.org_id == org_id, Run.id == run_id))
-    ).scalar_one_or_none()
+async def get_run(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    run_id: uuid.UUID,
+    *,
+    only_sites: Collection[str] | None = None,
+) -> Run | None:
+    query = select(Run).where(Run.org_id == org_id, Run.id == run_id)
+    if only_sites is not None:
+        query = query.where(Run.site_slug.in_(only_sites))
+    return (await session.execute(query)).scalar_one_or_none()
 
 
 # ------------------------------------------------------------------ audit and agent settings
@@ -346,7 +375,8 @@ async def audit(
     session: AsyncSession,
     *,
     org_id: uuid.UUID | None,
-    actor: User | None,
+    actor_id: uuid.UUID | None = None,
+    actor_email: str | None = None,
     action: str,
     target_type: str | None = None,
     target_id: str | None = None,
@@ -355,8 +385,8 @@ async def audit(
     session.add(
         AuditEvent(
             org_id=org_id,
-            actor_user_id=actor.id if actor else None,
-            actor_email=actor.email if actor else None,
+            actor_user_id=actor_id,
+            actor_email=actor_email,
             action=action,
             target_type=target_type,
             target_id=target_id,
@@ -369,3 +399,25 @@ async def audit(
 async def get_agent_overrides(session: AsyncSession) -> dict[str, dict[str, Any]]:
     rows = await session.execute(select(AgentSetting))
     return {row.agent_id: dict(row.overrides) for row in rows.scalars()}
+
+
+async def set_agent_overrides(
+    session: AsyncSession,
+    agent_id: str,
+    overrides: dict[str, Any],
+    updated_by: uuid.UUID | None,
+) -> None:
+    """Replace an agent's stored settings. Only a platform scoped session may write them."""
+    statement = insert(AgentSetting).values(
+        agent_id=agent_id, overrides=overrides, updated_by=updated_by, updated_at=func.now()
+    )
+    await session.execute(
+        statement.on_conflict_do_update(
+            index_elements=[AgentSetting.agent_id],
+            set_={
+                "overrides": overrides,
+                "updated_by": updated_by,
+                "updated_at": func.now(),
+            },
+        )
+    )

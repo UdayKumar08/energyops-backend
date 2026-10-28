@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import select
 
+from energyops.agents.registry import AGENTS
 from energyops.agents.sources import DEMO_TARIFFS, synthetic_demo_source
 from energyops.config import Environment
 from energyops.db import repo
@@ -92,6 +93,15 @@ async def seed_demo(db: Database) -> SeedResult:
         existing = {
             org.slug: org.id for org in (await session.execute(select(Organization))).scalars()
         }
+        # Switch the agents on for local use, with the labelled test adapter as their model, so
+        # the screens can be tried without a provider key. A platform admin can change both.
+        stored = await repo.get_agent_overrides(session)
+        for agent_id in AGENTS:
+            if agent_id not in stored:
+                await repo.set_agent_overrides(
+                    session, agent_id, {"status": "active", "provider": "test"}, None
+                )
+                created = True
 
     for demo in DEMO_ORGS:
         if demo.slug in existing:

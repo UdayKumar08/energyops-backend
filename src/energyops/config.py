@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     # The owner role, used only to run migrations and the seed script. Never by the running API.
     admin_database_url: SecretStr | None = None
     local_jwt_secret: SecretStr | None = None
+    # Microsoft Entra ID, used to check sign-in tokens outside the local environment.
+    entra_tenant_id: str | None = None
+    entra_client_id: str | None = None
     log_level: str = "INFO"
 
     @property

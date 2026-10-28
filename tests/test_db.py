@@ -249,7 +249,7 @@ async def test_agent_settings_can_be_read_by_anyone_but_changed_only_by_the_plat
     harbour, _ = await two_organisations(db)
     write = (
         "insert into agent_settings (agent_id, overrides) "
-        "values ('energy-analyst', '{\"temperature\": 0.2}')"
+        "values ('scratch-agent', '{\"temperature\": 0.2}')"
     )
     with pytest.raises(DBAPIError, match="row-level security"):
         async with db.session(Scope.for_org(harbour)) as session:
@@ -257,7 +257,8 @@ async def test_agent_settings_can_be_read_by_anyone_but_changed_only_by_the_plat
     async with db.session(Scope.platform_wide()) as session:
         await session.execute(text(write))
     async with db.session(Scope.for_org(harbour)) as session:
-        assert await repo.get_agent_overrides(session) == {"energy-analyst": {"temperature": 0.2}}
+        stored = await repo.get_agent_overrides(session)
+    assert stored["scratch-agent"] == {"temperature": 0.2}
 
 
 # ------------------------------------------------------------------ sites and access
@@ -479,13 +480,11 @@ async def test_the_audit_log_is_split_by_organisation_and_platform_rows_are_plat
 ) -> None:
     harbour, northside = await two_organisations(db)
     async with db.session(Scope.for_org(harbour)) as session:
-        await repo.audit(
-            session, org_id=harbour, actor=None, action="site.created", detail={"slug": "x"}
-        )
+        await repo.audit(session, org_id=harbour, action="site.created", detail={"slug": "x"})
     async with db.session(Scope.for_org(northside)) as session:
-        await repo.audit(session, org_id=northside, actor=None, action="site.created")
+        await repo.audit(session, org_id=northside, action="site.created")
     async with db.session(Scope.platform_wide()) as session:
-        await repo.audit(session, org_id=None, actor=None, action="agent.updated")
+        await repo.audit(session, org_id=None, action="agent.updated")
     assert await scalar(db, Scope.for_org(harbour), "select count(*) from audit_events") == 1
     assert await scalar(db, Scope.platform_wide(), "select count(*) from audit_events") == 3
     assert (
