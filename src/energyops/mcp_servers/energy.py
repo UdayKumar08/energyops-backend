@@ -4,7 +4,7 @@ Run it as a local subprocess that speaks MCP over stdin and stdout:
 
     uv run python -m energyops.mcp_servers.energy
 
-It has three tools and no way to change anything. They take at most a site name, never a file path
+It has four tools and no way to change anything. They take at most a site name, never a file path
 or a web address, they read only the built-in demo data, and every number they return is
 computed by our own Python functions, never by a model. Nothing may be printed to stdout except
 MCP messages, because stdout is the protocol channel.
@@ -20,11 +20,24 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from energyops.agents.sources import DEMO_SITES, ReadingsSource, synthetic_demo_source
+from energyops.agents.sources import (
+    DEMO_SITES,
+    ReadingsSource,
+    TariffSource,
+    demo_tariff_source,
+    synthetic_demo_source,
+)
 from energyops.anomalies import detect_anomalies
 from energyops.calculations import EnergyDataError
 from energyops.facts import build_fact_sheet
-from energyops.mcp_servers.schema import AnomalyListModel, FactSheetModel, SiteList
+from energyops.mcp_servers.schema import (
+    AnomalyListModel,
+    FactSheetModel,
+    SavingsSheetModel,
+    SiteList,
+)
+from energyops.savings import build_savings_sheet
+from energyops.tariffs import NoTariffError, require_tariff
 
 SERVER_NAME = "energyops-energy"
 
@@ -37,10 +50,15 @@ READ_ONLY = ToolAnnotations(
 
 
 def create_server(
-    source: ReadingsSource | None = None, sites: Sequence[str] = DEMO_SITES
+    source: ReadingsSource | None = None,
+    sites: Sequence[str] = DEMO_SITES,
+    tariffs: TariffSource | None = None,
 ) -> MCPServer:
     readings = source or synthetic_demo_source()
     known = tuple(sites)
+    # The demo tariffs go with the demo readings. Any other readings need their own tariffs, and
+    # without them the cost tool says there is no tariff instead of guessing a price.
+    prices: TariffSource = tariffs or (demo_tariff_source() if source is None else _no_tariffs)
     server = MCPServer(
         SERVER_NAME,
         description="Read-only energy figures for demo sites, computed in Python.",
@@ -101,7 +119,33 @@ def create_server(
                 f"unusable_data: The readings for {site!r} cannot be used: {exc}"
             ) from None
 
+    @server.tool(annotations=READ_ONLY)
+    def get_savings_facts(
+        site: Annotated[
+            str, Field(min_length=1, max_length=64, description="A site id from list_sites")
+        ],
+    ) -> SavingsSheetModel:
+        """Get the cost facts and estimated saving levers for one site, computed from its
+        readings and its tariff. Every saving is an estimate built from a stated assumption."""
+        if site not in known:
+            raise ToolError(
+                f"unknown_site: Unknown site {site!r}. Call list_sites to see the valid sites."
+            )
+        try:
+            tariff = require_tariff(prices(site), site)
+            return SavingsSheetModel.from_savings_sheet(build_savings_sheet(readings(site), tariff))
+        except NoTariffError as exc:
+            raise ToolError(f"no_tariff: {exc}") from None
+        except EnergyDataError as exc:
+            raise ToolError(
+                f"unusable_data: The readings for {site!r} cannot be used: {exc}"
+            ) from None
+
     return server
+
+
+def _no_tariffs(site: str | None) -> None:
+    return None
 
 
 def main() -> None:

@@ -1,0 +1,197 @@
+@import "tailwindcss";
+
+/* Plant-room palette: cool paper, slate-teal ink, one signal amber for things that need a look. */
+@theme {
+  --color-paper: #edf1ef;
+  --color-surface: #fbfcfb;
+  --color-ink: #14262b;
+  --color-muted: #566a67;
+  --color-line: #cad5d1;
+  --color-teal: #0e6a62;
+  --color-teal-deep: #0a4a45;
+  --color-teal-wash: #dcebe7;
+  --color-amber: #a65f00;
+  --color-amber-wash: #f6e8cf;
+  --color-brick: #a3301e;
+  --color-brick-wash: #f4dcd7;
+  --font-sans: "Schibsted Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  min-height: 100vh;
+}
+
+/* Tabular figures keep columns of numbers aligned. They also widen punctuation in this font, so
+   they are applied to figures only, never to running text. */
+.figure,
+.table .num {
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-teal);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@layer components {
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 2.5rem;
+    padding: 0 1rem;
+    border: 1px solid var(--color-line);
+    border-radius: 0.375rem;
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font-weight: 600;
+    font-size: 0.9375rem;
+    cursor: pointer;
+    transition: background-color 120ms, border-color 120ms;
+  }
+  .btn:hover:not(:disabled) {
+    border-color: var(--color-teal);
+    background: var(--color-teal-wash);
+  }
+  .btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  .btn-primary {
+    background: var(--color-teal);
+    border-color: var(--color-teal);
+    color: #fff;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--color-teal-deep);
+    border-color: var(--color-teal-deep);
+  }
+  .btn-danger {
+    color: var(--color-brick);
+    border-color: var(--color-brick);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: var(--color-brick-wash);
+    border-color: var(--color-brick);
+  }
+  .btn-small {
+    min-height: 2rem;
+    padding: 0 0.75rem;
+    font-size: 0.875rem;
+  }
+
+  .field {
+    display: block;
+    width: 100%;
+    min-height: 2.5rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-line);
+    border-radius: 0.375rem;
+    background: #fff;
+    color: var(--color-ink);
+    font: inherit;
+  }
+  .field:focus-visible {
+    border-color: var(--color-teal);
+  }
+  textarea.field {
+    min-height: 6rem;
+    resize: vertical;
+  }
+  .label {
+    display: block;
+    margin-bottom: 0.25rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+  .hint {
+    margin-top: 0.25rem;
+    font-size: 0.8125rem;
+    color: var(--color-muted);
+  }
+
+  .table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9375rem;
+  }
+  .table th {
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--color-muted);
+    border-bottom: 2px solid var(--color-ink);
+  }
+  .table td {
+    padding: 0.625rem 0.75rem;
+    vertical-align: top;
+    border-bottom: 1px solid var(--color-line);
+  }
+  .table .num {
+    text-align: right;
+  }
+  .table-wrap {
+    overflow-x: auto;
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.0625rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    background: var(--color-line);
+    color: var(--color-ink);
+    white-space: nowrap;
+  }
+  .pill-ok {
+    background: var(--color-teal-wash);
+    color: var(--color-teal-deep);
+  }
+  .pill-warn {
+    background: var(--color-amber-wash);
+    color: var(--color-amber);
+  }
+  .pill-bad {
+    background: var(--color-brick-wash);
+    color: var(--color-brick);
+  }
+
+  .notice {
+    padding: 0.75rem 1rem;
+    border-left: 4px solid var(--color-teal);
+    background: var(--color-teal-wash);
+    font-size: 0.9375rem;
+  }
+  .notice-warn {
+    border-color: var(--color-amber);
+    background: var(--color-amber-wash);
+  }
+  .notice-bad {
+    border-color: var(--color-brick);
+    background: var(--color-brick-wash);
+  }
+}

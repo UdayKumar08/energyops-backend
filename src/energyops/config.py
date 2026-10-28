@@ -42,8 +42,23 @@ class Settings(BaseSettings):
 
     environment: Environment = Environment.LOCAL
     data_mode: DataMode = DataMode.DEMO
+    # The application's connection: a restricted role that owns nothing, so row level security
+    # applies to it.
     database_url: SecretStr
+    # The owner role, used only to run migrations and the seed script. Never by the running API.
+    admin_database_url: SecretStr | None = None
     local_jwt_secret: SecretStr | None = None
+    # Microsoft Entra ID, used to check sign-in tokens outside the local environment.
+    entra_tenant_id: str | None = None
+    entra_client_id: str | None = None
+    # An OpenAI-compatible embeddings endpoint for knowledge search. The key is read from the
+    # environment only. Without all three, non-production environments use a lexical stand-in.
+    embeddings_base_url: str | None = None
+    embeddings_api_key: SecretStr | None = None
+    embeddings_model: str | None = None
+    # Ask the provider for 768 numbers per embedding. Turn off for a provider that rejects the
+    # `dimensions` field; the answer's size is checked either way.
+    embeddings_send_dimensions: bool = True
     log_level: str = "INFO"
 
     @property

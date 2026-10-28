@@ -29,9 +29,14 @@ def call(name: str, arguments: dict):
 # --------------------------------------------------------------- what the server offers
 
 
-def test_exactly_three_tools_are_offered_and_all_are_marked_read_only() -> None:
+def test_exactly_four_tools_are_offered_and_all_are_marked_read_only() -> None:
     tools = with_client(lambda c: c.list_tools()).tools
-    assert sorted(t.name for t in tools) == ["get_anomalies", "get_fact_sheet", "list_sites"]
+    assert sorted(t.name for t in tools) == [
+        "get_anomalies",
+        "get_fact_sheet",
+        "get_savings_facts",
+        "list_sites",
+    ]
     for tool in tools:
         hints = tool.annotations
         assert hints is not None
@@ -158,6 +163,7 @@ def test_a_real_client_can_start_the_server_as_a_subprocess_and_use_it() -> None
     assert name == SERVER_NAME and sorted(tools) == [
         "get_anomalies",
         "get_fact_sheet",
+        "get_savings_facts",
         "list_sites",
     ]
     expected = build_fact_sheet(SOURCE("demo-hotel")).facts[0].display

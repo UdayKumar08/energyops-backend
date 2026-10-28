@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from energyops.anomalies import DetectionResult
 from energyops.facts import Fact, FactSheet
+from energyops.savings import SavingsSheet
 
 
 class FactModel(BaseModel):
@@ -70,6 +71,28 @@ class FactSheetModel(BaseModel):
                 for f in self.facts
             ),
             warnings=tuple(self.warnings),
+        )
+
+
+class SavingsSheetModel(FactSheetModel):
+    """A fact sheet of costs and estimated savings, with the words that frame them."""
+
+    preface: str
+
+    @classmethod
+    def from_savings_sheet(cls, sheet: SavingsSheet) -> SavingsSheetModel:
+        base = FactSheetModel.from_fact_sheet(sheet)
+        return cls(**base.model_dump(), preface=sheet.preface)
+
+    def to_savings_sheet(self) -> SavingsSheet:
+        base = self.to_fact_sheet()
+        return SavingsSheet(
+            meter_id=base.meter_id,
+            first_reading=base.first_reading,
+            last_reading=base.last_reading,
+            facts=base.facts,
+            warnings=base.warnings,
+            preface=self.preface,
         )
 
 

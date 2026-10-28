@@ -23,15 +23,24 @@ from energyops.agents.energy_analyst_evals import good_reply
 from energyops.agents.event_facts import DirectEventFacts, McpEventFacts
 from energyops.agents.fact_sources import DirectFactSheets, McpFactSheets, McpTarget
 from energyops.agents.pipeline import AgentRequest, GroundedAgent, HasVia
+from energyops.agents.registry_types import RunInputs as RunInputs
 from energyops.agents.report_writer import REPORT_WRITER_SPEC, ReportRequest, ReportWriter
 from energyops.agents.report_writer_evals import good_report_reply
-from energyops.agents.sources import ReadingsSource
+from energyops.agents.savings_advisor import SAVINGS_ADVISOR_SPEC, SavingsAdvisor, SavingsRequest
+from energyops.agents.savings_advisor_evals import good_savings_reply, savings_sheet_for
+from energyops.agents.savings_facts import DirectSavingsFacts, McpSavingsFacts
+from energyops.agents.sources import ReadingsSource, TariffSource
 from energyops.agents.spec import AgentSpec
+from energyops.agents.supervisor import (
+    SUPERVISOR_SPEC,
+    SupervisorRequest,
+    keyword_route,
+)
 from energyops.facts import build_fact_sheet
 from energyops.models.base import ModelClient
 
 MAX_AGENTS = 5
-InputKind = Literal["question", "audience", "anomaly"]
+InputKind = Literal["question", "audience", "anomaly", "none"]
 DataAccess = Literal["mcp", "direct"]
 
 
@@ -40,13 +49,13 @@ class InvalidRunInput(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
-class RunInputs:
-    """Everything a person can supply for a run. Each agent uses only what it takes."""
+class DataSources:
+    """Where an agent's facts come from for one run: readings, tariffs and, for the MCP path, a
+    server to call. The caller decides what these are; an agent cannot widen them."""
 
-    site: str | None = None
-    question: str | None = None
-    audience: str | None = None
-    anomaly_id: str | None = None
+    readings: ReadingsSource
+    tariffs: TariffSource
+    mcp_target: McpTarget | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,9 +73,12 @@ class AgentEntry:
     build: Callable[[AgentSpec, ModelClient, Any], GroundedAgent[Any, Any, Any]]
     make_request: Callable[[RunInputs], AgentRequest]
     # How the agent gets its facts: directly in Python or through the read-only MCP server.
-    make_facts: Callable[[AgentSpec, DataAccess, ReadingsSource, McpTarget | None], HasVia]
+    make_facts: Callable[[AgentSpec, DataAccess, DataSources], HasVia]
     # The canned correct answer the labelled test adapter gives for this request.
-    test_reply: Callable[[ReadingsSource, AgentRequest], str]
+    test_reply: Callable[[DataSources, AgentRequest], str]
+    # False for an agent that is not run on its own: the supervisor needs the caller's tools, so
+    # it is run through the assistant (see service/assistant.py).
+    direct: bool = True
 
 
 def _only(inputs: RunInputs, takes: str) -> None:
@@ -78,21 +90,26 @@ def _only(inputs: RunInputs, takes: str) -> None:
     }
     extra = [name for name, value in given.items() if value is not None and name != takes]
     if extra:
-        raise InvalidRunInput(
-            f"This agent takes {takes.replace('_', ' ')}, not {extra[0].replace('_', ' ')}."
-        )
+        what = "only a site" if takes == "none" else takes.replace("_", " ")
+        raise InvalidRunInput(f"This agent takes {what}, not {extra[0].replace('_', ' ')}.")
 
 
-def _site_facts(
-    spec: AgentSpec, access: DataAccess, source: ReadingsSource, target: McpTarget | None
-) -> HasVia:
-    return McpFactSheets(spec, target) if access == "mcp" else DirectFactSheets(source)
+def _site_facts(spec: AgentSpec, access: DataAccess, data: DataSources) -> HasVia:
+    if access == "mcp":
+        return McpFactSheets(spec, data.mcp_target)
+    return DirectFactSheets(data.readings)
 
 
-def _event_facts(
-    spec: AgentSpec, access: DataAccess, source: ReadingsSource, target: McpTarget | None
-) -> HasVia:
-    return McpEventFacts(spec, target) if access == "mcp" else DirectEventFacts(source)
+def _event_facts(spec: AgentSpec, access: DataAccess, data: DataSources) -> HasVia:
+    if access == "mcp":
+        return McpEventFacts(spec, data.mcp_target)
+    return DirectEventFacts(data.readings)
+
+
+def _savings_facts(spec: AgentSpec, access: DataAccess, data: DataSources) -> HasVia:
+    if access == "mcp":
+        return McpSavingsFacts(spec, data.mcp_target)
+    return DirectSavingsFacts(data.readings, data.tariffs)
 
 
 def _analyst_request(inputs: RunInputs) -> AgentRequest:
@@ -124,17 +141,50 @@ def _investigation_request(inputs: RunInputs) -> AgentRequest:
         raise InvalidRunInput("An event id looks like A1.") from None
 
 
-def _analyst_reply(source: ReadingsSource, request: AgentRequest) -> str:
-    return good_reply(build_fact_sheet(source(request.site)))
+def _savings_request(inputs: RunInputs) -> AgentRequest:
+    _only(inputs, "none")
+    return SavingsRequest(site=inputs.site)
 
 
-def _report_reply(source: ReadingsSource, request: AgentRequest) -> str:
-    return good_report_reply(build_fact_sheet(source(request.site)))
+def _supervisor_request(inputs: RunInputs) -> AgentRequest:
+    _only(inputs, "question")
+    if not inputs.question:
+        raise InvalidRunInput("This agent needs a question.")
+    return SupervisorRequest(question=inputs.question, site=inputs.site)
 
 
-def _investigation_reply(source: ReadingsSource, request: AgentRequest) -> str:
+def _supervisor_build(spec: AgentSpec, model: ModelClient, facts: Any) -> Any:
+    raise NotImplementedError(
+        "The supervisor is run through the assistant, with the caller's tools."
+    )
+
+
+def _supervisor_facts(spec: AgentSpec, access: DataAccess, data: DataSources) -> HasVia:
+    raise NotImplementedError("The supervisor reads no fact sheet of its own.")
+
+
+def _supervisor_reply(data: DataSources, request: AgentRequest) -> str:
+    assert isinstance(request, SupervisorRequest)
+    return keyword_route(request.question)
+
+
+def _analyst_reply(data: DataSources, request: AgentRequest) -> str:
+    return good_reply(build_fact_sheet(data.readings(request.site)))
+
+
+def _report_reply(data: DataSources, request: AgentRequest) -> str:
+    return good_report_reply(build_fact_sheet(data.readings(request.site)))
+
+
+def _investigation_reply(data: DataSources, request: AgentRequest) -> str:
     assert isinstance(request, InvestigationRequest)
-    return good_investigation_reply(event_sheet_for(source, request.site, request.anomaly_id))
+    return good_investigation_reply(
+        event_sheet_for(data.readings, request.site, request.anomaly_id)
+    )
+
+
+def _savings_reply(data: DataSources, request: AgentRequest) -> str:
+    return good_savings_reply(savings_sheet_for(data.readings, data.tariffs, request.site))
 
 
 AGENT_ENTRIES: tuple[AgentEntry, ...] = (
@@ -173,6 +223,32 @@ AGENT_ENTRIES: tuple[AgentEntry, ...] = (
         make_request=_investigation_request,
         make_facts=_event_facts,
         test_reply=_investigation_reply,
+    ),
+    AgentEntry(
+        id="savings-advisor",
+        spec=SAVINGS_ADVISOR_SPEC,
+        input_kind="none",
+        examples=(),
+        build=SavingsAdvisor,
+        make_request=_savings_request,
+        make_facts=_savings_facts,
+        test_reply=_savings_reply,
+    ),
+    AgentEntry(
+        id="supervisor",
+        spec=SUPERVISOR_SPEC,
+        input_kind="question",
+        examples=(
+            Example("A cost question", "How much could we save on our energy bill?"),
+            Example("A forecast", "What will demand be next week?"),
+            Example("A ticket", "Raise a ticket for event A1."),
+            Example("Out of scope", "Write me a poem about winter."),
+        ),
+        build=_supervisor_build,
+        make_request=_supervisor_request,
+        make_facts=_supervisor_facts,
+        test_reply=_supervisor_reply,
+        direct=False,
     ),
 )
 

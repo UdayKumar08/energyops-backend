@@ -1,0 +1,124 @@
+# Deploys to Azure. Manual only: nothing here runs on a push or a pull request. WRITTEN, NEVER RUN.
+#
+# Sign-in to Azure uses OpenID Connect, so no Azure password or key is stored in GitHub. Set up
+# the app registration and its federated credential first (see infra/README.md), then add the
+# three IDs below as variables on the GitHub environment named in the form. Add required
+# reviewers to that environment so that an apply waits for a person.
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Which environment
+        type: choice
+        options: [dev, nonprod, prod]
+        required: true
+      stage:
+        description: foundation creates the registry and identity first. full builds the images and creates everything else.
+        type: choice
+        options: [foundation, full]
+        required: true
+      action:
+        description: plan only shows what would change. apply changes Azure.
+        type: choice
+        options: [plan, apply]
+        default: plan
+        required: true
+
+permissions:
+  contents: read
+  id-token: write # lets this job ask GitHub for the token it exchanges for an Azure sign-in
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: ${{ inputs.action }} ${{ inputs.stage }} (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: ${{ inputs.environment }}
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_environment: ${{ inputs.environment }}
+      TF_VAR_entra_tenant_id: ${{ vars.ENTRA_TENANT_ID }}
+      TF_VAR_entra_client_id: ${{ vars.ENTRA_CLIENT_ID }}
+      TF_IN_AUTOMATION: "true"
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v7
+
+      - name: Sign in to Azure
+        uses: Azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+
+      - name: Initialise against the shared state
+        run: |
+          terraform init -input=false \
+            -backend-config="resource_group_name=${{ vars.TFSTATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.TFSTATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ vars.TFSTATE_CONTAINER }}" \
+            -backend-config="key=energyops-${{ inputs.environment }}.tfstate" \
+            -backend-config="use_oidc=true" \
+            -backend-config="use_azuread_auth=true"
+
+      - name: Check the Terraform files
+        run: terraform validate
+
+      - name: Foundation (registry and identity)
+        if: inputs.stage == 'foundation'
+        run: |
+          targets='-target=azurerm_container_registry.main -target=azurerm_role_assignment.pull_images'
+          if [ "${{ inputs.action }}" = "apply" ]; then
+            terraform apply -input=false -auto-approve $targets \
+              -var="api_image=unused" -var="web_image=unused"
+          else
+            terraform plan -input=false $targets \
+              -var="api_image=unused" -var="web_image=unused"
+          fi
+
+      - name: Work out the image names
+        if: inputs.stage == 'full'
+        id: images
+        run: |
+          server=$(terraform output -raw registry_login_server 2>/dev/null || echo "pending.azurecr.io")
+          echo "server=$server" >> "$GITHUB_OUTPUT"
+          echo "api=$server/energyops-api:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "web=$server/energyops-web:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build the images in the registry
+        if: inputs.stage == 'full' && inputs.action == 'apply'
+        working-directory: .
+        run: |
+          registry="${{ steps.images.outputs.server }}"
+          registry="${registry%%.*}"
+          az acr build --registry "$registry" --image "energyops-api:${GITHUB_SHA}" .
+          az acr build --registry "$registry" --image "energyops-web:${GITHUB_SHA}" --file web/Dockerfile web
+
+      - name: Plan or apply everything
+        if: inputs.stage == 'full'
+        run: |
+          vars="-var=api_image=${{ steps.images.outputs.api }} -var=web_image=${{ steps.images.outputs.web }}"
+          if [ "${{ inputs.action }}" = "apply" ]; then
+            terraform apply -input=false -auto-approve $vars
+          else
+            terraform plan -input=false $vars
+          fi

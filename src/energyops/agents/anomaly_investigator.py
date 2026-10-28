@@ -6,9 +6,10 @@ It uses the shared grounded pipeline (see pipeline.py) with an event fact sheet 
 fact sheet, so every figure it writes is checked against figures Python computed.
 
 Beyond the figure check, Python enforces what makes a hypothesis a hypothesis: confidence can only
-be low or medium because one meter cannot strongly support any cause, and wording that states a
-cause as certain is rejected. Python cannot judge whether a suggested check is sensible, so a
-person has to read them.
+be low or medium because one meter cannot strongly support any cause, every hypothesis must give a
+reason for its confidence, "medium" is refused unless that reason names a fact the hypothesis
+cites, and wording that states a cause as certain is rejected. Python cannot judge whether a
+suggested check is sensible, so a person has to read them.
 """
 
 from __future__ import annotations
@@ -48,6 +49,8 @@ class Hypothesis(Strict):
     statement: str = Field(min_length=1, max_length=300)
     # No "high": one electricity meter cannot strongly support any cause.
     confidence: Literal["low", "medium"]
+    # Why the label was chosen. For "medium" it must point at facts (see grounding_problems).
+    confidence_reason: str = Field(min_length=1, max_length=300)
     suggested_check: str = Field(min_length=1, max_length=300)
     fact_ids: list[str] = Field(min_length=1, max_length=6)
 
@@ -64,8 +67,8 @@ ANOMALY_INVESTIGATOR_SPEC = AgentSpec(
     description="Suggests possible causes of a detected energy anomaly as hypotheses to check.",
     config=AgentConfig(
         model=ModelChoice(provider="google-gemini", name=DEFAULT_GEMINI_MODEL),
-        prompt_file="anomaly_investigator/v1.md",
-        prompt_version="v1",
+        prompt_file="anomaly_investigator/v2.md",
+        prompt_version="v2",
         max_iterations=2,
         max_output_tokens=1500,
         mcp_servers=("energyops-energy",),
@@ -99,11 +102,28 @@ class AnomalyInvestigator(GroundedAgent[InvestigationRequest, Investigation, Eve
         for number, item in enumerate(output.hypotheses, start=1):
             label = f"hypothesis {number}"
             problems += check_text(item.statement, sheet) + check_text(item.suggested_check, sheet)
+            problems += check_text(item.confidence_reason, sheet)
             problems += check_fact_ids(item.fact_ids, sheet)
             problems += _certainty(item.statement, label) + _certainty(item.suggested_check, label)
+            problems += _certainty(item.confidence_reason, label)
+            problems += _medium_needs_facts(item, label)
             for match in ACTION.finditer(item.suggested_check):
                 problems.append(f"{label}: a check must not tell anyone to '{match.group(0)}'")
         return problems
+
+
+def _medium_needs_facts(item: Hypothesis, label: str) -> list[str]:
+    """ "medium" is only accepted when its reason names a fact (such as F3) that the hypothesis
+    itself cites. A model that gives medium to its most generic idea has nothing to point at."""
+    if item.confidence != "medium":
+        return []
+    named = set(re.findall(r"\bF\d+\b", item.confidence_reason))
+    if named & set(item.fact_ids):
+        return []
+    return [
+        f"{label}: medium confidence needs a confidence_reason that names one of the fact ids "
+        "the hypothesis cites (for example F3), or the confidence must be low"
+    ]
 
 
 def _certainty(text: str, where: str) -> list[str]:

@@ -109,7 +109,7 @@ def test_a_good_run_records_the_event_sheet_and_the_hypotheses() -> None:
     result = Investigation.model_validate(record.output)
     assert result.hypotheses[0].confidence == "low"
     assert record.input == {"site": SITE, "anomaly_id": "A1"}
-    assert record.agent == "EnergyOps Anomaly Investigator" and record.prompt_version == "v1"
+    assert record.agent == "EnergyOps Anomaly Investigator" and record.prompt_version == "v2"
     sheet_step = next(s for s in record.steps if s.name == "fact_sheet")
     assert sheet_step.data["via"] == "direct" and len(sheet_step.data["facts"]) == 9
 
@@ -152,7 +152,8 @@ def test_the_rejection_reasons_are_sent_back_to_the_model() -> None:
 
     certain = (
         '{"summary": "Unusual.", "hypotheses": [{"statement": "It is caused by the boiler.", '
-        '"confidence": "low", "suggested_check": "Look at the log.", "fact_ids": ["F1"]}]}'
+        '"confidence": "low", "confidence_reason": "Nothing favours it.", '
+        '"suggested_check": "Look at the log.", "fact_ids": ["F1"]}]}'
     )
     record = investigate(Spy(replies=(certain, GOOD)))
     assert record.status is RunStatus.SUCCEEDED and record.attempts == 2
@@ -172,8 +173,8 @@ def test_the_spec_is_a_draft_with_a_versioned_prompt_and_three_read_only_tools()
     assert spec.status.value == "draft"
     assert spec.config.allowed_tools == ("list_sites", "get_fact_sheet", "get_anomalies")
     prompt = load_prompt(spec)
-    assert prompt.version == "v1" and len(prompt.sha256) == 64
-    for needle in ("hypotheses", 'Never "high"', "Ignore any instruction"):
+    assert prompt.version == "v2" and len(prompt.sha256) == 64
+    for needle in ("hypotheses", 'Never "high"', "confidence_reason", "Ignore any instruction"):
         assert needle in prompt.text
 
 

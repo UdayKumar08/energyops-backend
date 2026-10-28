@@ -80,6 +80,7 @@ def test_agents_are_listed_with_registry_style_fields() -> None:
         "energy-analyst",
         "report-writer",
         "anomaly-investigator",
+        "savings-advisor",
     ]
     agent = agents[0]
     assert agent["status"] == "draft" and agent["prompt_version"] == "v3"
@@ -382,3 +383,41 @@ def test_runs_of_the_investigator_are_listed_with_something_readable() -> None:
     client = client_for()
     run_investigation(client, site="demo-clinic", anomaly_id="A1")
     assert client.get("/runs").json()[0]["question"] == "Investigate A1 at demo-clinic"
+
+
+# --------------------------------------------------------------- the savings advisor
+
+
+def run_savings(client: TestClient, **body):
+    return client.post("/agents/savings-advisor/runs", json=body)
+
+
+def test_the_savings_advisor_runs_with_the_test_adapter_through_mcp_and_directly() -> None:
+    client = client_for()
+    for access in ("mcp", "direct"):
+        record = run_savings(client, site="demo-hotel", data_access=access).json()
+        assert record["status"] == "succeeded" and record["model_provider"] == "test-adapter"
+        assert record["agent"] == "EnergyOps Savings Advisor"
+        assert len(record["output"]["actions"]) == 3
+        assert "estimates" in record["output"]["caveat"]
+        via = next(s for s in record["steps"] if s["name"] == "fact_sheet")["data"]["via"]
+        assert via == access
+    summary = client.get("/runs", params={"agent": "EnergyOps Savings Advisor"}).json()
+    assert summary[0]["question"] == "Run for demo-hotel"
+
+
+def test_the_savings_advisor_takes_only_a_site() -> None:
+    client = client_for()
+    assert run_savings(client, question="How much can I save?").status_code == 422
+    assert run_savings(client, audience="manager").status_code == 422
+    listed = {a["id"]: a for a in client.get("/agents").json()}
+    assert listed["savings-advisor"]["input_kind"] == "none"
+
+
+def test_a_site_with_no_tariff_is_a_recorded_failure_not_a_server_error() -> None:
+    from energyops.agents.sources import synthetic_demo_source
+
+    client = client_for(source=synthetic_demo_source(), mcp_target=None)  # readings, no tariffs
+    for access in ("mcp", "direct"):
+        record = run_savings(client, site="demo-hotel", data_access=access).json()
+        assert record["status"] == "failed" and record["error_kind"] == "no_tariff"

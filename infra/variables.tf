@@ -1,0 +1,90 @@
+variable "subscription_id" {
+  type        = string
+  description = "The Azure subscription to create things in."
+}
+
+variable "environment" {
+  type        = string
+  description = "dev, nonprod or prod. Goes into names and into ENERGYOPS_ENVIRONMENT."
+  validation {
+    condition     = contains(["dev", "nonprod", "prod"], var.environment)
+    error_message = "environment must be dev, nonprod or prod."
+  }
+}
+
+variable "location" {
+  type    = string
+  default = "uksouth"
+}
+
+variable "name_prefix" {
+  type    = string
+  default = "energyops"
+}
+
+variable "entra_tenant_id" {
+  type        = string
+  description = "The Microsoft Entra tenant whose sign-in tokens the API accepts."
+}
+
+variable "entra_client_id" {
+  type        = string
+  description = "The application (client) ID whose tokens the API accepts as its audience."
+}
+
+variable "api_image" {
+  type        = string
+  description = "Full image reference for the API, for example <registry>/energyops-api:<git sha>. Use a tag that names one build, never 'latest'."
+}
+
+variable "web_image" {
+  type        = string
+  description = "Full image reference for the web app."
+}
+
+variable "postgres_sku" {
+  type        = string
+  default     = "B_Standard_B1ms"
+  description = "Burstable is the cheapest tier; use a General Purpose size for production."
+}
+
+variable "postgres_storage_mb" {
+  type    = number
+  default = 32768
+}
+
+variable "postgres_backup_retention_days" {
+  type    = number
+  default = 7
+}
+
+variable "data_mode" {
+  type        = string
+  default     = "live"
+  description = "ENERGYOPS_DATA_MODE. The API refuses 'demo' in prod."
+}
+
+variable "model_key_secrets" {
+  type        = map(string)
+  default     = {}
+  description = <<-EOT
+    Model provider keys, as a map of environment variable name to the name of a Key Vault secret
+    that a person has already created, for example { GEMINI_API_KEY = "gemini-api-key" }. The
+    keys never pass through Terraform or its state.
+  EOT
+}
+
+variable "embeddings" {
+  type = object({
+    base_url   = string
+    model      = string
+    key_secret = string # name of an existing Key Vault secret holding the API key
+  })
+  default     = null
+  description = "An OpenAI-compatible embeddings endpoint. Required in prod; the API refuses its word-matching stand-in there."
+}
+
+variable "tags" {
+  type    = map(string)
+  default = {}
+}

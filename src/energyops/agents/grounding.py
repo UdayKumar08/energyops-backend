@@ -4,9 +4,11 @@ Figures with an energy unit (kWh, kW), percentages, day counts ("14 days", "14-d
 with a currency symbol are checked. A figure with kWh or kW must equal a computed fact with the
 same unit, compared at the number of decimal places the writer used. A percentage must match a
 computed percentage, and the sign is ignored because words like "lower" carry it. A day count
-must match the days-covered fact. Other units and every currency amount are rejected, because the
-fact sheet holds no such figures. Plain numbers without a unit, such as dates, times and fact
-ids, are not figures and are skipped.
+must match the days-covered fact. A currency amount must equal a computed fact in that same
+currency, so it is rejected when the fact sheet holds no cost figures (every sheet except the
+savings advisor's). Amounts written in words ("40 pounds") are rejected too, because they cannot
+be matched reliably. Other units are rejected as well. Plain numbers without a unit, such as
+dates, times and fact ids, are not figures and are skipped.
 
 Minutes are checked only when the fact sheet holds a figure in minutes, which today is only an
 anomaly event's duration. For every other sheet a number of minutes is skipped as before, so
@@ -26,6 +28,9 @@ _FIGURE = re.compile(
     r"(?P<cur>[£$€])?\s?(?P<num>\d[\d,]*(?:\.\d+)?)[\s-]?"
     r"(?P<unit>kWh|MWh|GWh|kW|MW|GW|W|%|days?|minutes?|mins?)?(?![A-Za-z])",
     re.IGNORECASE,
+)
+_WORD_CURRENCY = re.compile(
+    r"\d[\d,]*(?:\.\d+)?\s?(?:pounds?|quid|GBP|EUR|USD|euros?|dollars?|pence)\b", re.IGNORECASE
 )
 _CHECKED_UNITS = {
     "kwh": "kWh",
@@ -49,11 +54,23 @@ def _clean(text: str) -> str:
 def check_text(text: str, sheet: FactSheet) -> list[str]:
     """Return one problem per figure in `text` that is not backed by the fact sheet."""
     problems: list[str] = []
+    for word in _WORD_CURRENCY.finditer(text):
+        problems.append(
+            f"'{word.group(0)}': write money with its currency symbol, exactly as in the fact sheet"
+        )
     for match in _FIGURE.finditer(_clean(text)):
         shown = match.group(0).strip()
         unit = (match.group("unit") or "").lower()
         if match.group("cur"):
-            problems.append(f"'{shown}': the fact sheet has no cost figures")
+            symbol = match.group("cur")
+            candidates = [f.value for f in sheet.facts if f.unit == symbol]
+            if not candidates:
+                problems.append(f"'{shown}': the fact sheet has no cost figures")
+                continue
+            number = match.group("num").replace(",", "")
+            decimals = len(number.split(".")[1]) if "." in number else 0
+            if not any(_same(float(number), c, decimals, ignore_sign=False) for c in candidates):
+                problems.append(f"'{shown}' does not match any computed {symbol} figure")
             continue
         if not unit:
             continue

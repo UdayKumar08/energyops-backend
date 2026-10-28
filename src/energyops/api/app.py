@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, RedirectResponse
@@ -17,9 +17,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from energyops.agents.fact_sources import McpTarget
-from energyops.agents.registry import AGENTS, AgentEntry, InvalidRunInput, RunInputs
-from energyops.agents.runs import RunRecord, RunStatus
-from energyops.agents.sources import ReadingsSource, synthetic_demo_source
+from energyops.agents.registry import AGENTS, AgentEntry, DataSources, InvalidRunInput, RunInputs
+from energyops.agents.runs import RunRecord
+from energyops.agents.sources import (
+    ReadingsSource,
+    TariffSource,
+    demo_tariff_source,
+    synthetic_demo_source,
+)
 from energyops.agents.spec import load_prompt, unimplemented_guardrails
 from energyops.anomalies import detect_anomalies
 from energyops.api.providers import (
@@ -30,6 +35,14 @@ from energyops.api.providers import (
     provider_infos,
 )
 from energyops.api.store import RunStore
+from energyops.api.views import (
+    AgentDetail,
+    AgentSummary,
+    PromptView,
+    RunSummary,
+    run_summary,
+    summarise,
+)
 from energyops.config import Environment
 from energyops.mcp_servers.schema import AnomalyListModel
 from energyops.models.base import ModelClient
@@ -62,39 +75,6 @@ class ApiSettings(BaseSettings):
     environment: Environment = Environment.LOCAL
 
 
-class ExampleView(BaseModel):
-    label: str
-    value: str
-
-
-class AgentSummary(BaseModel):
-    id: str
-    name: str
-    domain: str
-    status: str
-    description: str
-    capabilities: tuple[str, ...]
-    model_provider: str
-    model_name: str
-    prompt_version: str
-    # "question": a free-text question. "audience": a choice of who the report is for.
-    input_kind: str
-    examples: list[ExampleView]
-
-
-class PromptView(BaseModel):
-    version: str
-    sha256: str
-    text: str
-
-
-class AgentDetail(BaseModel):
-    summary: AgentSummary
-    spec: dict[str, Any]
-    prompt: PromptView
-    guardrails_not_implemented: list[str]
-
-
 class RunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -109,66 +89,7 @@ class RunRequest(BaseModel):
     model: str | None = Field(default=None, min_length=1, max_length=100)
 
 
-class RunSummary(BaseModel):
-    run_id: str
-    agent: str
-    status: RunStatus
-    question: str
-    model_provider: str
-    model_name: str
-    attempts: int
-    error_kind: str | None
-    started_at: str
-    finished_at: str
-
-
 ClientFactory = Callable[[ProviderId, str | None, ProviderKeys, str], ModelClient]
-
-
-def _summarise(entry: AgentEntry) -> AgentSummary:
-    spec = entry.spec
-    return AgentSummary(
-        id=entry.id,
-        name=spec.name,
-        domain=spec.domain,
-        status=spec.status.value,
-        description=spec.description,
-        capabilities=spec.capabilities,
-        model_provider=spec.config.model.provider,
-        model_name=spec.config.model.name,
-        prompt_version=spec.config.prompt_version,
-        input_kind=entry.input_kind,
-        examples=[ExampleView(label=e.label, value=e.value) for e in entry.examples],
-    )
-
-
-def _input_label(record: RunRecord) -> str:
-    """What was asked, for a list of runs: the question, or the audience of a report."""
-    question = record.input.get("question")
-    if question:
-        return str(question)
-    audience = record.input.get("audience")
-    if audience:
-        return f"Report for {audience}"
-    event = record.input.get("anomaly_id")
-    return (
-        f"Investigate {event} at {record.input.get('site') or 'the default site'}" if event else ""
-    )
-
-
-def _run_summary(record: RunRecord) -> RunSummary:
-    return RunSummary(
-        run_id=record.run_id,
-        agent=record.agent,
-        status=record.status,
-        question=_input_label(record),
-        model_provider=record.model_provider,
-        model_name=record.model_name,
-        attempts=record.attempts,
-        error_kind=record.error_kind,
-        started_at=record.started_at.isoformat(),
-        finished_at=record.finished_at.isoformat(),
-    )
 
 
 def create_app(
@@ -176,6 +97,7 @@ def create_app(
     *,
     keys: ProviderKeys | None = None,
     source: ReadingsSource | None = None,
+    tariffs: TariffSource | None = None,
     store: RunStore | None = None,
     mcp_target: McpTarget | None = None,
     client_factory: ClientFactory = make_client,
@@ -187,11 +109,13 @@ def create_app(
             f"not '{chosen.environment.value}'."
         )
     readings = source or synthetic_demo_source()
+    prices = tariffs or (demo_tariff_source() if source is None else (lambda site: None))
     if mcp_target is None and source is not None:
         # A custom data source must reach the MCP path too, so serve it from an in-process server.
         from energyops.mcp_servers.energy import create_server
 
-        mcp_target = create_server(source=source)
+        mcp_target = create_server(source=source, tariffs=prices)
+    data = DataSources(readings=readings, tariffs=prices, mcp_target=mcp_target)
     runs = store or RunStore()
     provider_keys = keys
 
@@ -239,11 +163,11 @@ def create_app(
 
     @app.get("/agents")
     def list_agents() -> list[AgentSummary]:
-        return [_summarise(entry) for entry in AGENTS.values()]
+        return [summarise(entry) for entry in AGENTS.values() if entry.direct]
 
     def entry_for(agent_id: str) -> AgentEntry:
         entry = AGENTS.get(agent_id)
-        if entry is None:
+        if entry is None or not entry.direct:
             raise HTTPException(status_code=404, detail=f"No agent called '{agent_id}'.")
         return entry
 
@@ -253,7 +177,7 @@ def create_app(
         spec = entry.spec
         prompt = load_prompt(spec)
         return AgentDetail(
-            summary=_summarise(entry),
+            summary=summarise(entry),
             spec=spec.model_dump(mode="json"),
             prompt=PromptView(version=prompt.version, sha256=prompt.sha256, text=prompt.text),
             guardrails_not_implemented=unimplemented_guardrails(spec),
@@ -276,14 +200,14 @@ def create_app(
         except InvalidRunInput as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
         try:
-            test_reply = entry.test_reply(readings, request)
+            test_reply = entry.test_reply(data, request)
         except (LookupError, ValueError):
             test_reply = "{}"  # the agent will report the unknown site or unusable data itself
         try:
             client = client_factory(body.provider, body.model, current_keys(), test_reply)
         except ProviderUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from None
-        facts = entry.make_facts(spec, body.data_access, readings, mcp_target)
+        facts = entry.make_facts(spec, body.data_access, data)
         record = await entry.build(spec, client, facts).run(request)
         runs.add(record)
         return record
@@ -292,7 +216,7 @@ def create_app(
     def list_runs(
         agent: str | None = None, limit: int = Query(default=50, ge=1, le=200)
     ) -> list[RunSummary]:
-        return [_run_summary(r) for r in runs.newest_first(agent, limit)]
+        return [run_summary(r) for r in runs.newest_first(agent, limit)]
 
     @app.get("/runs/{run_id}")
     def get_run(run_id: str) -> RunRecord:

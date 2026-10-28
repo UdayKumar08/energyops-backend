@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, "build/**"]
 
 permissions:
   contents: read
@@ -16,7 +16,24 @@ jobs:
   checks:
     name: Lint, types and tests
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    env:
+      # A missing test database is a failure in CI, not a skipped test.
+      ENERGYOPS_REQUIRE_DB: "1"
+      ENERGYOPS_TEST_SUPERUSER_URL: postgresql://postgres:postgres@127.0.0.1:5433/postgres
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
     steps:
       - name: Check out the code
         uses: actions/checkout@v7
@@ -30,6 +47,9 @@ jobs:
       - name: Install dependencies from the lock file
         run: uv sync --locked
 
+      - name: Create the test roles, databases and extension
+        run: psql "postgresql://postgres:postgres@127.0.0.1:5433/postgres" -v ON_ERROR_STOP=1 -f docker/initdb/01_local_roles.sql
+
       - name: Lint
         run: uv run ruff check .
 
@@ -41,3 +61,107 @@ jobs:
 
       - name: Run tests
         run: uv run pytest
+
+  web:
+    name: Web app lint, types, tests and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v7
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies from the lock file
+        run: npm ci
+
+      - name: Check that the API types match the API description
+        run: |
+          npm run gen:api
+          git diff --exit-code -- src/api/schema.d.ts
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Check types
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  browser:
+    name: Browser tests against the real API
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      E2E_SUPERUSER: postgres:postgres
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v7
+
+      - name: Install uv and Python 3.13
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install the API's dependencies
+        run: uv sync --locked
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install the web app's dependencies and Chromium
+        working-directory: web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Create the roles, then migrate and seed the browser-test database
+        run: |
+          psql "postgresql://postgres:postgres@127.0.0.1:5433/postgres" -v ON_ERROR_STOP=1 -f docker/initdb/01_local_roles.sql
+          bash web/e2e/prepare.sh
+
+      - name: Build the web app
+        working-directory: web
+        run: npm run build
+
+      - name: Run the browser tests
+        working-directory: web
+        run: npm run e2e
+
+      - name: Keep the traces of failed tests
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-traces
+          path: web/test-results
+          retention-days: 7

@@ -1,0 +1,45 @@
+# Status: what is verified, what is not
+
+This page was written last, after the build on the branch `build/full-platform`. It says what was run and what happened, what was only tried with stand-ins, and what has never been run at all. Where a claim in another document sounds more confident than this page, this page is right. Nothing here has been merged or deployed, no pull request exists, and no paid Azure resource was created.
+
+## What was actually run, and what it showed
+
+The backend has 707 automated tests. They ran locally against a real PostgreSQL 16 with pgvector 0.6.0 (not a stand-in database), and ruff, the formatter check and mypy are clean. The same checks ran on GitHub Actions for the branch and passed, including a separate job for the web app and a separate job that starts the real API and web app against a pgvector database and drives them with a browser. "Passed on GitHub" means the CI run for the branch's latest commit, which you can open and read.
+
+The web app has 18 unit tests, a lint run, a type check and a production build, all clean, and 21 browser tests that run in Chromium against the real API and a real database. They cover signing in and out, that the session token cannot be read by page scripts, menus that follow the role, a technician limited to one site, the assistant answering and declining, a forecast showing its limits, a report, a CSV upload being refused and then accepted, knowledge search not crossing organisations, a ticket being approved, a person being added, the platform admin screens (edit, try and reset an agent, create and suspend an organisation), the menu on a phone-sized screen, and the voice controls with a stand-in for the browser's speech recognition (see below). The standalone production build of the web app, which the Dockerfile relies on, was started by hand and answered on its login page.
+
+Isolation between organisations is the part most worth trusting, and it has the most tests. The database policy is tested by running queries with no filter at all as the restricted role. The API is tested across the main route groups with two organisations, a person limited to some sites, and a platform administrator who must not reach customer rows. A site, document, ticket or run that belongs to someone else answers exactly as one that does not exist.
+
+The database roles bootstrap (the one-time creation of the owner role, the application role and the vector extension) was run against a real PostgreSQL with throwaway roles and a throwaway database, as a superuser. The migration step was run up and down on empty databases. The ticket approval flow was run through a real pause and resume with LangGraph's PostgreSQL saver.
+
+## Tested only with stand-ins
+
+Every agent has been run only with the labelled test adapter, which returns scripted replies, or with scripted replies written for a specific case. That covers the savings advisor, the anomaly investigator with prompt version 2 (the confidence reason rule), and the supervisor. The report writer and the anomaly investigator had live runs earlier, with earlier prompts. None of the four newest behaviours has been shown to work with a real model, so I cannot say that a real model will phrase answers the checks accept, how often it will need a retry, or whether the supervisor routes real questions correctly. The routing evaluation can be run with `python -m energyops.agents.supervisor_evals gemini` once a key is available.
+
+Microsoft Entra token checking is tested with RSA keys generated inside the tests, so signature, issuer, tenant, audience, scope and expiry handling are exercised. The step that fetches and caches the published signing keys and picks the right one by key id is tested against a small local web server that serves a key set. No real tenant has ever issued a token to this code, and Microsoft's own key endpoint has never been contacted.
+
+The OpenAI-compatible embeddings client is tested with an in-process fake transport that returns what the documentation says a provider returns. It has never called a real provider. The Gemini compatibility endpoint does not document the `dimensions` field, so the first real call may need `ENERGYOPS_EMBEDDINGS_SEND_DIMENSIONS=false`; the client checks that it received 768 numbers and says so plainly if it did not. Without a provider, knowledge search uses a hashing embedder that matches shared words only. It is labelled that way in results and refused in production.
+
+## Written but never run
+
+The two Dockerfiles have never been built, because no container engine was available. The Terraform in `infra` has never been applied, planned or validated; no Terraform program was available, and the only check it has had is that the files parse as HCL. I wrote it from the azurerm 5.11 documentation, so treat the first `terraform validate` as certain to find mistakes. A few specifics I could not confirm from documentation are the subnet delegation for the Container Apps environment, the exact `VECTOR` value for the extension allow list, and whether the server administrator on Azure can hand a database to a role it has been granted. The deploy workflow has never run and is manual only. No backup or restore has been tested anywhere, so no backup should be called verified.
+
+## Not built
+
+The web app can only sign in through the local development route, where a seeded email address gets a short token from the backend. There is no Microsoft Entra sign-in flow in the web app. The deployed web app therefore cannot be used by anyone until that is added, and this is the largest gap between this branch and something a customer could use. The API side is ready for it.
+
+Prompt shield and content safety are not implemented, and no setting pretends to provide them. Voice uses the browser's own speech features, which in some browsers send audio to the browser vendor's service, and the assistant page says so. Browser tests replace the speech recognition with a stand-in to check that heard words fill in the question, that a blocked microphone is explained, and that a browser without support is told so. No real speech was ever recognised, and read-aloud was not tested. Server-side speech needs a paid Azure resource and was not built.
+
+No alerts, dashboards or budgets exist for Azure. Forecasting knows nothing about weather, holidays or trend, and says so with every forecast. Everything is in UTC; local time and daylight saving are not supported. Anomaly thresholds were set against invented data and are not calibrated to any real building, and the savings shares (for night load, peak and shiftable use) are assumptions and not measurements. The demo tariffs and all demo organisations, people and readings are invented.
+
+## Weak spots worth knowing about
+
+Row level security covers every table the product defines, but LangGraph's own saved-state tables do not have an organisation column, so access to a paused approval is controlled in code: a graph can only be resumed for a ticket id that the caller first read through the ticket table, which is protected. The organisation's last-administrator guard is defensive; the API cannot reach the state it protects against, because only an administrator can change people and cannot change themselves, so there is no meaningful test for it.
+
+The CSV upload accepts one meter's average power per interval. Files with a different layout are refused with a reason rather than converted. The forecast refuses with fewer than 14 complete days, and its backtest needs more history than the minimum to say anything, which the answer states.
+
+GitHub actions are pinned by version tag, not by commit, and base images by tag, not by digest. Dependabot and branch protection are not set up. These are listed in the backlog.
+
+## How to check any of this yourself
+
+From the repository root, `docker compose up -d db`, then `TZ=UTC uv run pytest -q` for the backend (about three and a half minutes), `uv run ruff check . && uv run ruff format --check . && uv run mypy` for the static checks, and in `web`, `npm ci`, `npm run lint`, `npm run typecheck`, `npm test`, `npm run build` and, after `bash e2e/prepare.sh`, `npm run e2e`. To look at the app, run `uv run python -m energyops.db.setup --seed`, start the API with `uv run python -m energyops.service`, start the web app with `npm run dev` in `web`, and sign in as `manager@harbour.example` or `platform@energyops.example`.

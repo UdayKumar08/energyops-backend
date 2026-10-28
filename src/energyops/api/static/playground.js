@@ -203,6 +203,24 @@ function showRecord(record) {
         ),
       );
     }
+  } else if (record.status === "succeeded" && record.output.actions) {
+    answer.append(
+      pill("passed the figure and wording check", "ok"),
+      el("p", { class: "banner", text: "Every saving is an estimate built from stated assumptions. Nothing here is verified or promised." }),
+      el("p", { text: record.output.summary }),
+    );
+    for (const action of record.output.actions) {
+      answer.append(
+        el(
+          "div",
+          { class: "finding" },
+          el("div", { text: action.title }),
+          el("p", { class: "muted small", text: action.explanation }),
+          chips(action.fact_ids),
+        ),
+      );
+    }
+    answer.append(el("p", { class: "muted small", text: record.output.caveat }));
   } else if (record.status === "succeeded" && record.output.hypotheses) {
     answer.append(
       pill("passed the figure and wording check", "ok"),
@@ -215,6 +233,7 @@ function showRecord(record) {
           "div",
           { class: "finding" },
           el("div", {}, pill(`confidence: ${item.confidence}`, item.confidence === "medium" ? "warn" : ""), " ", el("span", { text: item.statement })),
+          el("p", { class: "muted small", text: `Why ${item.confidence}: ${item.confidence_reason}` }),
           el("p", { class: "muted small", text: `Suggested check: ${item.suggested_check}` }),
           chips(item.fact_ids),
         ),
@@ -313,7 +332,7 @@ async function runAgent() {
   const body = { provider: $("provider").value, data_access: $("access").value };
   if (kind === "question") body.question = question;
   else if (kind === "audience") body.audience = $("audience").value;
-  else body.anomaly_id = $("event").value;
+  else if (kind === "anomaly") body.anomaly_id = $("event").value;
   if ($("model").value.trim()) body.model = $("model").value.trim();
   if ($("site").value.trim()) body.site = $("site").value.trim();
 
@@ -363,6 +382,8 @@ function applyInputKind() {
     updateCount();
   } else if (kind === "audience") {
     for (const example of examples) audience.append(el("option", { value: example.value, text: example.label }));
+  } else if (kind === "none") {
+    // Only a site is needed.
   } else {
     // The demo-hotel has no events, so start from the site that has some.
     if (!$("site").value.trim()) $("site").value = "demo-clinic";

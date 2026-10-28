@@ -9,12 +9,7 @@ It is a decision-support platform. It does not control equipment or trade energy
 
 ## Status
 
-Phase 1, in progress. Implemented so far: the project skeleton and CI, settings, a
-synthetic meter data generator, energy calculations, a common model interface with a
-labelled test adapter, and adapters for Google Gemini and Nebius. No agent, API, database
-or user interface exists yet. This repository will hold the Python backend: API, database
-migrations, model adapters, agents, MCP servers and tests. The web application will live
-in a separate repository.
+This repository holds a working draft of the whole platform on the branch `build/full-platform`, which has not been merged or deployed. It contains the Python backend (API, database and migrations, row level security, sign-in checks, five agents, MCP server, LangGraph approval flow, uploads, forecasting and knowledge search), a Next.js web app in `web/` with customer and platform admin screens, Dockerfiles, and Azure Terraform that has never been applied. [docs/status.md](docs/status.md) says exactly what has been verified, what was only tested with fakes and what has never been run. Read it before relying on any claim in the other documents.
 
 ## Requirements
 
@@ -27,6 +22,8 @@ Secrets never go in this repository. Real values live in an ignored `.env` file 
 and in Azure Key Vault in the cloud.
 
 ## Documentation
+
+See [docs/status.md](docs/status.md) for what works and what has not been run.
 
 See [docs/architecture.md](docs/architecture.md) for the planned structure and the reasons behind it.
 
