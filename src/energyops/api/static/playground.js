@@ -203,6 +203,23 @@ function showRecord(record) {
         ),
       );
     }
+  } else if (record.status === "succeeded" && record.output.hypotheses) {
+    answer.append(
+      pill("passed the figure and wording check", "ok"),
+      el("p", { class: "banner", text: "These are hypotheses from one meter's readings, not findings. A person has to check them." }),
+      el("p", { text: record.output.summary }),
+    );
+    for (const item of record.output.hypotheses) {
+      answer.append(
+        el(
+          "div",
+          { class: "finding" },
+          el("div", {}, pill(`confidence: ${item.confidence}`, item.confidence === "medium" ? "warn" : ""), " ", el("span", { text: item.statement })),
+          el("p", { class: "muted small", text: `Suggested check: ${item.suggested_check}` }),
+          chips(item.fact_ids),
+        ),
+      );
+    }
   } else if (record.status === "succeeded") {
     answer.append(pill("passed the figure check", "ok"), el("p", { text: record.output.summary }));
     for (const finding of record.output.findings) {
@@ -289,9 +306,14 @@ async function runAgent() {
     status.textContent = "Type a question first.";
     return;
   }
+  if (kind === "anomaly" && !$("event").value) {
+    status.textContent = "Pick a site that has an event first.";
+    return;
+  }
   const body = { provider: $("provider").value, data_access: $("access").value };
   if (kind === "question") body.question = question;
-  else body.audience = $("audience").value;
+  else if (kind === "audience") body.audience = $("audience").value;
+  else body.anomaly_id = $("event").value;
   if ($("model").value.trim()) body.model = $("model").value.trim();
   if ($("site").value.trim()) body.site = $("site").value.trim();
 
@@ -323,6 +345,7 @@ function applyInputKind() {
   const { input_kind: kind, examples } = state.detail.summary;
   $("question-row").hidden = kind !== "question";
   $("audience-row").hidden = kind !== "audience";
+  $("event-row").hidden = kind !== "anomaly";
   const box = $("examples");
   clear(box);
   const audience = $("audience");
@@ -338,8 +361,32 @@ function applyInputKind() {
     }
     $("question").value = examples.length ? examples[0].value : "";
     updateCount();
-  } else {
+  } else if (kind === "audience") {
     for (const example of examples) audience.append(el("option", { value: example.value, text: example.label }));
+  } else {
+    // The demo-hotel has no events, so start from the site that has some.
+    if (!$("site").value.trim()) $("site").value = "demo-clinic";
+    loadEvents();
+  }
+}
+
+async function loadEvents() {
+  const select = $("event");
+  const note = $("event-note");
+  clear(select);
+  note.textContent = "Looking for events...";
+  const site = $("site").value.trim();
+  try {
+    const found = await api(`/anomalies${site ? `?site=${encodeURIComponent(site)}` : ""}`);
+    for (const event of found.anomalies) {
+      const start = new Date(event.start).toISOString().replace("T", " ").slice(0, 16);
+      select.append(el("option", { value: event.id, text: `${event.id}: ${event.kind}, ${start} UTC, ${(new Date(event.end) - new Date(event.start)) / 60000} minutes` }));
+    }
+    note.textContent = found.anomalies.length
+      ? `${found.anomalies.length} event(s) found by the detector for ${found.meter_id}. They are unusual readings, not faults.`
+      : `The detector found no events for ${found.meter_id}. Try demo-clinic.`;
+  } catch (error) {
+    note.textContent = `Could not list events: ${error.message}`;
   }
 }
 
@@ -359,6 +406,9 @@ async function start() {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) runAgent();
   });
   $("provider").addEventListener("change", updateProviderNote);
+  $("site").addEventListener("change", () => {
+    if (state.detail && state.detail.summary.input_kind === "anomaly") loadEvents();
+  });
   $("run").addEventListener("click", runAgent);
   $("toggle-trace").addEventListener("click", () => setTrace($("trace").hidden));
   for (const button of document.querySelectorAll(".tabs button")) {

@@ -1,7 +1,7 @@
 """Run the energy analyst against a real model and report what happened. Run it yourself:
 
     uv run python -m energyops.agents.live_eval gemini|nebius [model-name] [--show]
-        [--save FILE] [--via mcp] [--agent energy-analyst|report-writer]
+        [--save FILE] [--via mcp] [--agent energy-analyst|report-writer|anomaly-investigator]
 
 It reads the key from your environment or local .env and never prints it. Each question is a
 real call (or two, when the first answer is rejected and sent back), so it uses a little of your
@@ -26,7 +26,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from energyops.agents.fact_sources import DirectFactSheets, FactSheetProvider, McpFactSheets
+from energyops.agents.pipeline import HasVia
 from energyops.agents.registry import AGENTS, RunInputs
 from energyops.agents.runs import RunRecord, RunStatus
 from energyops.agents.sources import synthetic_demo_source
@@ -45,6 +45,7 @@ class LiveCase:
     purpose: str
     audience: str | None = None
     site: str | None = None
+    anomaly_id: str | None = None
 
 
 LIVE_CASES: tuple[LiveCase, ...] = (
@@ -120,29 +121,51 @@ REPORT_CASES: tuple[LiveCase, ...] = (
     ),
 )
 
+INVESTIGATION_CASES: tuple[LiveCase, ...] = (
+    LiveCase(
+        "after_hours_spike",
+        "Investigate event A1 at demo-clinic (a two hour spike overnight)",
+        "A spike: hypotheses must be hedged, low or medium confidence, and grounded.",
+        site="demo-clinic",
+        anomaly_id="A1",
+    ),
+    LiveCase(
+        "midday_dropout",
+        "Investigate event A2 at demo-clinic (a one hour drop at midday)",
+        "A drop: the causes differ from a spike and a metering gap is one of them.",
+        site="demo-clinic",
+        anomaly_id="A2",
+    ),
+)
+
 CASES_BY_AGENT: dict[str, tuple[LiveCase, ...]] = {
     "energy-analyst": LIVE_CASES,
     "report-writer": REPORT_CASES,
+    "anomaly-investigator": INVESTIGATION_CASES,
 }
 
 
 async def evaluate(
     client: ModelClient,
     cases: Sequence[LiveCase] = LIVE_CASES,
-    facts: FactSheetProvider | None = None,
+    facts: HasVia | None = None,
     agent: str = "energy-analyst",
 ) -> list[CaseResult]:
     """Ask every case through the chosen agent, one at a time."""
     entry = AGENTS[agent]
-    runner = entry.build(entry.spec, client, facts or DirectFactSheets(synthetic_demo_source()))
+    source = synthetic_demo_source()
+    runner = entry.build(
+        entry.spec, client, facts or entry.make_facts(entry.spec, "direct", source, None)
+    )
     results = []
     for case in cases:
-        asks_question = entry.input_kind == "question"
+        # Each agent takes one kind of input. The others stay unset, which the registry checks.
         request = entry.make_request(
             RunInputs(
                 site=case.site,
-                question=case.question if asks_question else None,
-                audience=None if asks_question else case.audience,
+                question=case.question if entry.input_kind == "question" else None,
+                audience=case.audience if entry.input_kind == "audience" else None,
+                anomaly_id=case.anomaly_id if entry.input_kind == "anomaly" else None,
             )
         )
         results.append(CaseResult(case, await runner.run(request)))
@@ -189,6 +212,14 @@ def format_report(results: Sequence[CaseResult], show: bool = False) -> str:
                 for section in record.output["sections"]:
                     ids = ", ".join(section["fact_ids"])
                     lines.append(f"    section {section['heading']} [{ids}]: {section['body']}")
+            elif record.output is not None and "hypotheses" in record.output:
+                lines.append(f"    summary: {record.output['summary']}")
+                for item in record.output["hypotheses"]:
+                    ids = ", ".join(item["fact_ids"])
+                    lines.append(
+                        f"    hypothesis [{ids}] ({item['confidence']}): {item['statement']}"
+                    )
+                    lines.append(f"        check: {item['suggested_check']}")
             elif record.output is not None:
                 lines.append(f"    summary: {record.output['summary']}")
                 for finding in record.output["findings"]:
@@ -256,7 +287,10 @@ async def run(
     agent: str = "energy-analyst",
 ) -> int:
     chosen = client or build_client(provider, ProviderKeys(), model)
-    facts = McpFactSheets(AGENTS[agent].spec) if via == "mcp" else None
+    entry = AGENTS[agent]
+    facts = (
+        entry.make_facts(entry.spec, "mcp", synthetic_demo_source(), None) if via == "mcp" else None
+    )
     results = await evaluate(chosen, CASES_BY_AGENT[agent], facts=facts, agent=agent)
     print(format_report(results, show))
     if save is not None:
