@@ -1,0 +1,33 @@
+import type { components } from "./schema";
+
+type S = components["schemas"];
+
+export type Me = S["MeView"];
+export type SiteListItem = S["SiteListItem"];
+export type FactSheet = S["FactSheetModel"];
+export type Anomaly = S["AnomalyModel"];
+export type AnomalyList = S["AnomalyListModel"];
+export type ReadingPoint = S["ReadingPoint"];
+export type Tariff = S["TariffView"];
+export type TariffBody = S["TariffBody"];
+export type Band = S["BandBody"];
+export type Ticket = S["TicketView"];
+export type Usage = S["UsageView"];
+export type PlatformUsage = S["UsageReport"];
+export type AuditEntry = S["AuditView"];
+export type RunRecord = S["RunRecord"];
+export type RunSummary = S["RunSummary"];
+export type AskResponse = S["AskResponse"];
+export type AgentSummary = S["AgentSummary"];
+export type AdminAgentRow = S["AdminAgentRow"];
+export type AdminAgentDetail = S["AdminAgentDetail"];
+export type AgentOverrides = S["AgentOverrides"];
+export type ProviderInfo = S["ProviderInfo"];
+export type Organisation = S["OrganisationView"];
+export type OrgPerson = S["energyops__service__routes_org__PersonView"];
+export type AdminPerson = S["energyops__service__routes_admin__PersonView"];
+export type Forecast = S["ForecastView"];
+export type UploadResult = S["UploadResult"];
+export type Ingestion = S["IngestionView"];
+export type KnowledgeDocument = S["DocumentView"];
+export type SearchResult = S["SearchResult"];
