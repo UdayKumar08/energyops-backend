@@ -44,10 +44,12 @@ def _hypothesis(
     confidence: str = "low",
     check: str = "Compare the start and end with the building's operating schedule.",
     fact_ids: list[str] | None = None,
+    reason: str = "Nothing in the facts favours this over other ideas.",
 ) -> dict[str, object]:
     return {
         "statement": statement,
         "confidence": confidence,
+        "confidence_reason": reason,
         "suggested_check": check,
         "fact_ids": fact_ids or ["F1"],
     }
@@ -102,6 +104,56 @@ CASES: tuple[InvestigationEvalCase, ...] = (
         "high_confidence_is_a_shape_error",
         "Confidence can only be low or medium, so 'high' is sent back as a shape error.",
         lambda sheet: (_reply("Unusual.", [_hypothesis(confidence="high")]),),
+        RunStatus.FAILED,
+        2,
+        "invalid_output",
+    ),
+    InvestigationEvalCase(
+        "medium_without_a_fact_in_its_reason_is_rejected",
+        "Medium confidence whose reason names no fact is refused, then a low one is accepted.",
+        lambda sheet: (
+            _reply("Unusual.", [_hypothesis(confidence="medium", reason="It seems likely.")]),
+            good_investigation_reply(sheet),
+        ),
+        RunStatus.SUCCEEDED,
+        2,
+    ),
+    InvestigationEvalCase(
+        "medium_with_a_cited_fact_is_accepted",
+        "Medium confidence is accepted when its reason names a fact the hypothesis cites.",
+        lambda sheet: (
+            _reply(
+                "Unusual.",
+                [
+                    _hypothesis(
+                        confidence="medium",
+                        fact_ids=["F1", "F3"],
+                        reason="The length of the event (F3) fits a schedule that ran late.",
+                    )
+                ],
+            ),
+        ),
+        RunStatus.SUCCEEDED,
+        1,
+    ),
+    InvestigationEvalCase(
+        "missing_reason_is_a_shape_error",
+        "A hypothesis with no confidence_reason is sent back as a shape error.",
+        lambda sheet: (
+            json.dumps(
+                {
+                    "summary": "Unusual.",
+                    "hypotheses": [
+                        {
+                            "statement": "It may be a schedule.",
+                            "confidence": "low",
+                            "suggested_check": "Compare with the schedule.",
+                            "fact_ids": ["F1"],
+                        }
+                    ],
+                }
+            ),
+        ),
         RunStatus.FAILED,
         2,
         "invalid_output",

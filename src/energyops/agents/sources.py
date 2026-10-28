@@ -12,8 +12,11 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from energyops.synthetic import MeterReading, SiteProfile, generate_readings
+from energyops.tariffs import Tariff, TariffBand
 
 ReadingsSource = Callable[[str | None], Sequence[MeterReading]]
+# A site's tariff, or None when none has been set. Prices are never guessed.
+TariffSource = Callable[[str | None], Tariff | None]
 
 DEMO_START = datetime(2026, 3, 2, tzinfo=UTC)  # a Monday
 DEMO_SITES = ("demo-hotel", "demo-office", "demo-clinic")
@@ -50,5 +53,31 @@ def synthetic_demo_source(seed: int = 1, days: int = 14) -> ReadingsSource:
                 for r in readings
             ]
         return readings
+
+    return source
+
+
+# Prices for the demo sites. The numbers are invented for the demo and are not any supplier's.
+DEMO_TARIFFS: dict[str, Tariff] = {
+    "demo-hotel": Tariff(
+        label="Demo hotel tariff (invented)",
+        currency="GBP",
+        price_per_kwh=0.19,
+        bands=(TariffBand("Peak", 7, 21, 0.34, days="weekday"),),
+        demand_charge_per_kw_month=6.5,
+        is_demo=True,
+    ),
+    "demo-office": Tariff(
+        label="Demo office tariff (invented)", currency="GBP", price_per_kwh=0.26, is_demo=True
+    ),
+    "demo-clinic": Tariff(
+        label="Demo clinic tariff (invented)", currency="GBP", price_per_kwh=0.27, is_demo=True
+    ),
+}
+
+
+def demo_tariff_source() -> TariffSource:
+    def source(site: str | None) -> Tariff | None:
+        return DEMO_TARIFFS.get(site or DEMO_SITES[0])
 
     return source

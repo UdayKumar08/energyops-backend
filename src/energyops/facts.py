@@ -20,6 +20,8 @@ from energyops.calculations import (
 )
 from energyops.synthetic import MeterReading
 
+CURRENCY_UNITS = frozenset({"£", "€", "$"})
+
 
 @dataclass(frozen=True, slots=True)
 class Fact:
@@ -35,6 +37,10 @@ class Fact:
     @property
     def display(self) -> str:
         """The figure exactly as it is shown to a model and expected back, one decimal place."""
+        if self.unit in CURRENCY_UNITS:
+            # Prices per kWh need more than two decimals (£0.2834); amounts do not.
+            places = 4 if self.value < 1 and round(self.value, 2) != round(self.value, 4) else 2
+            return f"{self.unit}{self.value:,.{places}f}"
         if self.unit == "%":
             return f"{self.value:.1f}%"
         if self.unit == "minutes":

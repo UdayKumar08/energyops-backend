@@ -17,9 +17,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from energyops.agents.fact_sources import McpTarget
-from energyops.agents.registry import AGENTS, AgentEntry, InvalidRunInput, RunInputs
+from energyops.agents.registry import AGENTS, AgentEntry, DataSources, InvalidRunInput, RunInputs
 from energyops.agents.runs import RunRecord, RunStatus
-from energyops.agents.sources import ReadingsSource, synthetic_demo_source
+from energyops.agents.sources import (
+    ReadingsSource,
+    TariffSource,
+    demo_tariff_source,
+    synthetic_demo_source,
+)
 from energyops.agents.spec import load_prompt, unimplemented_guardrails
 from energyops.anomalies import detect_anomalies
 from energyops.api.providers import (
@@ -77,7 +82,8 @@ class AgentSummary(BaseModel):
     model_provider: str
     model_name: str
     prompt_version: str
-    # "question": a free-text question. "audience": a choice of who the report is for.
+    # "question": a free-text question. "audience": who a report is for. "anomaly": an event id.
+    # "none": only a site.
     input_kind: str
     examples: list[ExampleView]
 
@@ -150,10 +156,9 @@ def _input_label(record: RunRecord) -> str:
     audience = record.input.get("audience")
     if audience:
         return f"Report for {audience}"
+    site = record.input.get("site") or "the default site"
     event = record.input.get("anomaly_id")
-    return (
-        f"Investigate {event} at {record.input.get('site') or 'the default site'}" if event else ""
-    )
+    return f"Investigate {event} at {site}" if event else f"Run for {site}"
 
 
 def _run_summary(record: RunRecord) -> RunSummary:
@@ -176,6 +181,7 @@ def create_app(
     *,
     keys: ProviderKeys | None = None,
     source: ReadingsSource | None = None,
+    tariffs: TariffSource | None = None,
     store: RunStore | None = None,
     mcp_target: McpTarget | None = None,
     client_factory: ClientFactory = make_client,
@@ -187,11 +193,13 @@ def create_app(
             f"not '{chosen.environment.value}'."
         )
     readings = source or synthetic_demo_source()
+    prices = tariffs or (demo_tariff_source() if source is None else (lambda site: None))
     if mcp_target is None and source is not None:
         # A custom data source must reach the MCP path too, so serve it from an in-process server.
         from energyops.mcp_servers.energy import create_server
 
-        mcp_target = create_server(source=source)
+        mcp_target = create_server(source=source, tariffs=prices)
+    data = DataSources(readings=readings, tariffs=prices, mcp_target=mcp_target)
     runs = store or RunStore()
     provider_keys = keys
 
@@ -276,14 +284,14 @@ def create_app(
         except InvalidRunInput as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
         try:
-            test_reply = entry.test_reply(readings, request)
+            test_reply = entry.test_reply(data, request)
         except (LookupError, ValueError):
             test_reply = "{}"  # the agent will report the unknown site or unusable data itself
         try:
             client = client_factory(body.provider, body.model, current_keys(), test_reply)
         except ProviderUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from None
-        facts = entry.make_facts(spec, body.data_access, readings, mcp_target)
+        facts = entry.make_facts(spec, body.data_access, data)
         record = await entry.build(spec, client, facts).run(request)
         runs.add(record)
         return record

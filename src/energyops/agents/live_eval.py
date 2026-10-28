@@ -1,7 +1,8 @@
 """Run the energy analyst against a real model and report what happened. Run it yourself:
 
     uv run python -m energyops.agents.live_eval gemini|nebius [model-name] [--show]
-        [--save FILE] [--via mcp] [--agent energy-analyst|report-writer|anomaly-investigator]
+        [--save FILE] [--via mcp]
+        [--agent energy-analyst|report-writer|anomaly-investigator|savings-advisor]
 
 It reads the key from your environment or local .env and never prints it. Each question is a
 real call (or two, when the first answer is rejected and sent back), so it uses a little of your
@@ -27,9 +28,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from energyops.agents.pipeline import HasVia
-from energyops.agents.registry import AGENTS, RunInputs
+from energyops.agents.registry import AGENTS, DataSources, RunInputs
 from energyops.agents.runs import RunRecord, RunStatus
-from energyops.agents.sources import synthetic_demo_source
+from energyops.agents.sources import demo_tariff_source, synthetic_demo_source
 from energyops.models.base import ModelClient
 from energyops.models.credentials import ProviderKeys
 from energyops.models.live_check import build_client
@@ -138,11 +139,37 @@ INVESTIGATION_CASES: tuple[LiveCase, ...] = (
     ),
 )
 
+SAVINGS_CASES: tuple[LiveCase, ...] = (
+    LiveCase(
+        "hotel_savings",
+        "Savings advice for demo-hotel (night load, peak demand and load shifting levers)",
+        "Three levers with an invented time of use tariff: ranges must be estimates.",
+        site="demo-hotel",
+    ),
+    LiveCase(
+        "office_savings",
+        "Savings advice for demo-office (one lever, a flat tariff)",
+        "One lever: the advisor must not invent others.",
+        site="demo-office",
+    ),
+    LiveCase(
+        "clinic_savings",
+        "Savings advice for demo-clinic (night load and unusual spikes)",
+        "A lever built on detected spikes, which are events to look into, not faults.",
+        site="demo-clinic",
+    ),
+)
+
 CASES_BY_AGENT: dict[str, tuple[LiveCase, ...]] = {
     "energy-analyst": LIVE_CASES,
     "report-writer": REPORT_CASES,
     "anomaly-investigator": INVESTIGATION_CASES,
+    "savings-advisor": SAVINGS_CASES,
 }
+
+
+def _demo_data() -> DataSources:
+    return DataSources(readings=synthetic_demo_source(), tariffs=demo_tariff_source())
 
 
 async def evaluate(
@@ -153,9 +180,8 @@ async def evaluate(
 ) -> list[CaseResult]:
     """Ask every case through the chosen agent, one at a time."""
     entry = AGENTS[agent]
-    source = synthetic_demo_source()
     runner = entry.build(
-        entry.spec, client, facts or entry.make_facts(entry.spec, "direct", source, None)
+        entry.spec, client, facts or entry.make_facts(entry.spec, "direct", _demo_data())
     )
     results = []
     for case in cases:
@@ -212,6 +238,13 @@ def format_report(results: Sequence[CaseResult], show: bool = False) -> str:
                 for section in record.output["sections"]:
                     ids = ", ".join(section["fact_ids"])
                     lines.append(f"    section {section['heading']} [{ids}]: {section['body']}")
+            elif record.output is not None and "actions" in record.output:
+                lines.append(f"    summary: {record.output['summary']}")
+                for action in record.output["actions"]:
+                    ids = ", ".join(action["fact_ids"])
+                    lines.append(f"    action [{ids}]: {action['title']}")
+                    lines.append(f"        {action['explanation']}")
+                lines.append(f"    caveat: {record.output['caveat']}")
             elif record.output is not None and "hypotheses" in record.output:
                 lines.append(f"    summary: {record.output['summary']}")
                 for item in record.output["hypotheses"]:
@@ -219,6 +252,7 @@ def format_report(results: Sequence[CaseResult], show: bool = False) -> str:
                     lines.append(
                         f"    hypothesis [{ids}] ({item['confidence']}): {item['statement']}"
                     )
+                    lines.append(f"        why {item['confidence']}: {item['confidence_reason']}")
                     lines.append(f"        check: {item['suggested_check']}")
             elif record.output is not None:
                 lines.append(f"    summary: {record.output['summary']}")
@@ -288,9 +322,7 @@ async def run(
 ) -> int:
     chosen = client or build_client(provider, ProviderKeys(), model)
     entry = AGENTS[agent]
-    facts = (
-        entry.make_facts(entry.spec, "mcp", synthetic_demo_source(), None) if via == "mcp" else None
-    )
+    facts = entry.make_facts(entry.spec, "mcp", _demo_data()) if via == "mcp" else None
     results = await evaluate(chosen, CASES_BY_AGENT[agent], facts=facts, agent=agent)
     print(format_report(results, show))
     if save is not None:

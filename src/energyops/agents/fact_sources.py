@@ -29,11 +29,13 @@ from energyops.calculations import EnergyDataError
 from energyops.facts import FactSheet, build_fact_sheet
 from energyops.mcp_servers.energy import SERVER_NAME
 from energyops.mcp_servers.schema import FactSheetModel
+from energyops.tariffs import NoTariffError
 
 # The server marks failures it expected with one of these words and a colon, so the client can
 # tell "no such site" from "readings cannot be used" without guessing from the sentence.
 UNKNOWN_SITE = "unknown_site"
 UNUSABLE_DATA = "unusable_data"
+NO_TARIFF = "no_tariff"
 
 
 class ToolAccessError(Exception):
@@ -98,6 +100,8 @@ class McpToolSource:
             raise LookupError(payload)
         if kind == UNUSABLE_DATA:
             raise EnergyDataError(payload)
+        if kind == NO_TARIFF:
+            raise NoTariffError(payload)
         raise ToolAccessError(payload)
 
     async def _fetch(
@@ -167,7 +171,7 @@ class McpToolSource:
             code, _, message = text.removeprefix("Error executing tool " + tool + ": ").partition(
                 ": "
             )
-            if code in (UNKNOWN_SITE, UNUSABLE_DATA) and message:
+            if code in (UNKNOWN_SITE, UNUSABLE_DATA, NO_TARIFF) and message:
                 return code, message
             return "error", f"the tool '{tool}' failed: {text[:200]}"
         if result.structured_content is None:
