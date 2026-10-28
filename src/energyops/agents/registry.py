@@ -51,7 +51,7 @@ class AgentEntry:
     spec: AgentSpec
     input_kind: InputKind
     examples: tuple[Example, ...]
-    build: Callable[[AgentSpec, ModelClient, FactSheetProvider], GroundedAgent[Any, Any]]
+    build: Callable[[AgentSpec, ModelClient, FactSheetProvider], GroundedAgent[Any, Any, Any]]
     make_request: Callable[[RunInputs], AgentRequest]
     test_reply: Callable[[FactSheet], str]
 

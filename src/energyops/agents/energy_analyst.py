@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
+from energyops.agents.fact_sources import FactSheetProvider
 from energyops.agents.grounding import check_fact_ids, check_text
 from energyops.agents.pipeline import (
     AgentRequest,
@@ -17,6 +18,7 @@ from energyops.agents.pipeline import (
     Strict,
     parse_json_reply,
 )
+from energyops.agents.runs import TraceRecorder
 from energyops.agents.spec import AgentConfig, AgentSpec, ModelChoice
 from energyops.facts import FactSheet
 from energyops.models.providers import DEFAULT_GEMINI_MODEL
@@ -66,7 +68,10 @@ ENERGY_ANALYST_SPEC = AgentSpec(
 )
 
 
-class EnergyAnalyst(GroundedAgent[AnalystRequest, AnalystReport]):
+class EnergyAnalyst(GroundedAgent[AnalystRequest, AnalystReport, FactSheetProvider]):
+    async def fetch_facts(self, request: AnalystRequest, trace: TraceRecorder) -> FactSheet:
+        return await self._facts(request.site, trace)
+
     def input_text(self, request: AnalystRequest) -> str:
         return request.question
 

@@ -14,8 +14,10 @@ from typing import Literal
 
 from pydantic import Field
 
+from energyops.agents.fact_sources import FactSheetProvider
 from energyops.agents.grounding import check_fact_ids, check_text
 from energyops.agents.pipeline import AgentRequest, GroundedAgent, Strict, parse_json_reply
+from energyops.agents.runs import TraceRecorder
 from energyops.agents.spec import AgentConfig, AgentSpec, ModelChoice
 from energyops.facts import FactSheet
 from energyops.models.providers import DEFAULT_GEMINI_MODEL
@@ -67,7 +69,10 @@ REPORT_WRITER_SPEC = AgentSpec(
 )
 
 
-class ReportWriter(GroundedAgent[ReportRequest, SiteReport]):
+class ReportWriter(GroundedAgent[ReportRequest, SiteReport, FactSheetProvider]):
+    async def fetch_facts(self, request: ReportRequest, trace: TraceRecorder) -> FactSheet:
+        return await self._facts(request.site, trace)
+
     def input_text(self, request: ReportRequest) -> str:
         return ""  # no free text comes from the person
 
