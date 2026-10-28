@@ -10,9 +10,9 @@ Every agent has typed input and output, a versioned prompt file, a named list of
 
 The energy analyst explains how a site used energy over a period, such as which days were highest, when the peak happened and how weekdays compare with weekends. It is built first and is backlog item 7.
 
-The report writer turns the same computed facts into a weekly or monthly summary written for a manager. It reuses the fact sheet from the analyst, so it adds little new calculation.
+The report writer turns the same computed facts into a short written report for a manager or a technician. It reuses the fact sheet from the analyst, so it adds little new calculation. It has no free-text input, only a site and an audience, so there is nothing for a person to inject through the request. Python enforces its structure as well as its figures: the sections must use known headings in a fixed order (Consumption, Demand, Weekdays and weekends, Data quality), each section must cite fact ids, and a Data quality section is required exactly when the fact sheet carries a warning about missing readings and is refused when it does not. It is built and sits in draft, with a versioned prompt, a registry entry, scripted evaluation cases and a live evaluation (`--agent report-writer`), but it has not yet been run against a real model.
 
-The anomaly investigator takes an anomaly that a Python detector has already found, gathers the surrounding context and explains possible causes as hypotheses, each with a stated confidence and a suggested check. It cannot be built until an anomaly detector exists in this repository, and it never decides on its own that something is a fault.
+The anomaly investigator takes an anomaly that a Python detector has already found, gathers the surrounding context and explains possible causes as hypotheses, each with a stated confidence and a suggested check. It never decides on its own that something is a fault. The detector it needs now exists (see [anomalies.md](anomalies.md)), tested on synthetic data only, so the investigator can be built once the detector is exposed as a tool.
 
 The savings advisor suggests actions that could reduce cost and gives an estimated range calculated in Python from the tariff. The range is always labelled as an estimate, is never promised as a saving, and is never described as verified until a real before and after comparison exists.
 
@@ -24,4 +24,4 @@ Forecasting, searching a knowledge base, voice and ticket preparation are capabi
 
 ## Build order
 
-The energy analyst, then the report writer, then the anomaly investigator, then the savings advisor, then the supervisor. Nothing on this list except the analyst's design has started, and no agent is implemented yet.
+The energy analyst, then the report writer, then the anomaly investigator, then the savings advisor, then the supervisor. The energy analyst and the report writer are built and share one pipeline (`energyops/agents/pipeline.py`) that fetches the fact sheet, makes one model call, checks the shape and every figure in Python, and sends a rejected answer back once with the reasons. A new agent supplies only its prompt message, its output shape and its own checks, and is added as one entry in `energyops/agents/registry.py`, which refuses to hold more than five. Both agents are still drafts. The remaining three have not started.

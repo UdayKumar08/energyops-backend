@@ -11,6 +11,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel
 
+from energyops.anomalies import DetectionResult
 from energyops.facts import Fact, FactSheet
 
 
@@ -75,3 +76,52 @@ class FactSheetModel(BaseModel):
 class SiteList(BaseModel):
     sites: list[str]
     default_site: str
+
+
+class AnomalyModel(BaseModel):
+    id: str
+    kind: str
+    start: str
+    end: str
+    intervals: int
+    peak_at: str
+    observed_kw_at_peak: float
+    baseline_kw_at_peak: float
+    peak_deviation_kw: float
+    energy_difference_kwh: float
+
+
+class AnomalyListModel(BaseModel):
+    meter_id: str
+    anomalies: list[AnomalyModel]
+    judged_readings: int
+    unjudged_readings: int
+    note: str
+
+    @classmethod
+    def from_result(cls, result: DetectionResult) -> AnomalyListModel:
+        return cls(
+            meter_id=result.meter_id,
+            anomalies=[
+                AnomalyModel(
+                    id=a.id,
+                    kind=a.kind,
+                    start=a.start.isoformat(),
+                    end=a.end.isoformat(),
+                    intervals=a.intervals,
+                    peak_at=a.peak_at.isoformat(),
+                    observed_kw_at_peak=round(a.observed_kw_at_peak, 3),
+                    baseline_kw_at_peak=round(a.baseline_kw_at_peak, 3),
+                    peak_deviation_kw=round(a.peak_deviation_kw, 3),
+                    energy_difference_kwh=round(a.energy_difference_kwh, 3),
+                )
+                for a in result.anomalies
+            ],
+            judged_readings=result.judged_readings,
+            unjudged_readings=result.unjudged_readings,
+            note=(
+                "Unusual readings compared with the same time of day on other days of the same "
+                "kind. These are events to look into, not faults. Readings without enough "
+                "history are counted as unjudged."
+            ),
+        )

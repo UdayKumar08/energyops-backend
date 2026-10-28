@@ -5,7 +5,15 @@ import pytest
 
 from energyops.agents import live_eval
 from energyops.agents.energy_analyst_evals import good_reply
-from energyops.agents.live_eval import LIVE_CASES, evaluate, exit_code, format_report
+from energyops.agents.live_eval import (
+    CASES_BY_AGENT,
+    LIVE_CASES,
+    REPORT_CASES,
+    evaluate,
+    exit_code,
+    format_report,
+)
+from energyops.agents.report_writer_evals import good_report_reply
 from energyops.agents.sources import synthetic_demo_source
 from energyops.facts import build_fact_sheet
 from energyops.models.test_adapter import SimulatedProviderFailure, TestAdapter
@@ -121,8 +129,10 @@ def test_save_is_announced_and_never_contains_a_key(tmp_path, capsys) -> None:
 def test_main_accepts_save_and_passes_it_on(monkeypatch, tmp_path) -> None:
     seen = {}
 
-    async def fake_run(provider, model, show, client=None, save=None, via="direct"):
-        seen.update(provider=provider, model=model, show=show, save=save, via=via)
+    async def fake_run(
+        provider, model, show, client=None, save=None, via="direct", agent="energy-analyst"
+    ):
+        seen.update(provider=provider, model=model, show=show, save=save, via=via, agent=agent)
         return 0
 
     monkeypatch.setattr(live_eval, "run", fake_run)
@@ -136,4 +146,52 @@ def test_main_accepts_save_and_passes_it_on(monkeypatch, tmp_path) -> None:
         "show": True,
         "save": target,
         "via": "mcp",
+        "agent": "energy-analyst",
     }
+
+
+# ------------------------------------------------------------ the report writer's cases
+
+
+def test_every_report_case_passes_with_a_grounded_report_and_is_sent_as_an_audience() -> None:
+    sheet = build_fact_sheet(synthetic_demo_source()("demo-hotel"))
+    adapter = TestAdapter(good_report_reply(sheet))
+    results = asyncio.run(evaluate(adapter, REPORT_CASES[:2], agent="report-writer"))
+    assert [r.passed for r in results] == [True, True]
+    assert [r.record.input["audience"] for r in results] == ["manager", "technical"]
+    assert all("question" not in r.record.input for r in results)
+    shown = format_report(results, show=True)
+    assert "headline: " in shown and "section Consumption [F1]: " in shown
+
+
+def test_the_report_cases_cover_both_audiences_and_both_sites_and_are_registered() -> None:
+    assert {c.audience for c in REPORT_CASES} == {"manager", "technical"}
+    assert {c.site for c in REPORT_CASES} == {"demo-hotel", "demo-office"}
+    assert CASES_BY_AGENT == {"energy-analyst": LIVE_CASES, "report-writer": REPORT_CASES}
+    assert len({c.name for c in REPORT_CASES}) == len(REPORT_CASES)
+
+
+def test_run_can_evaluate_the_report_writer_and_save_its_records(tmp_path) -> None:
+    sheet = build_fact_sheet(synthetic_demo_source()("demo-hotel"))
+    out = tmp_path / "report.json"
+    code = asyncio.run(
+        live_eval.run(
+            "gemini",
+            client=TestAdapter(good_report_reply(sheet)),
+            save=out,
+            agent="report-writer",
+        )
+    )
+    saved = json.loads(out.read_text(encoding="utf-8"))
+    assert code == 0 and [r["case"] for r in saved] == [c.name for c in REPORT_CASES]
+    assert saved[0]["record"]["agent"] == "EnergyOps Report Writer"
+    # The canned reply holds the hotel's figures, so the same report is rightly rejected for the
+    # office: the figure check works per site.
+    assert [r["passed"] for r in saved] == [True, True, False]
+    assert saved[2]["record"]["error_kind"] == "grounding"
+
+
+def test_an_unknown_agent_is_refused_by_the_argument_parser() -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        live_eval.main(["gemini", "--agent", "supervisor"])
+    assert exit_info.value.code == 2

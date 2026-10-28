@@ -29,9 +29,9 @@ def call(name: str, arguments: dict):
 # --------------------------------------------------------------- what the server offers
 
 
-def test_exactly_two_tools_are_offered_and_all_are_marked_read_only() -> None:
+def test_exactly_three_tools_are_offered_and_all_are_marked_read_only() -> None:
     tools = with_client(lambda c: c.list_tools()).tools
-    assert sorted(t.name for t in tools) == ["get_fact_sheet", "list_sites"]
+    assert sorted(t.name for t in tools) == ["get_anomalies", "get_fact_sheet", "list_sites"]
     for tool in tools:
         hints = tool.annotations
         assert hints is not None
@@ -42,9 +42,10 @@ def test_exactly_two_tools_are_offered_and_all_are_marked_read_only() -> None:
 def test_no_tool_accepts_a_path_a_url_or_anything_but_a_site_id() -> None:
     tools = {t.name: t for t in with_client(lambda c: c.list_tools()).tools}
     assert tools["list_sites"].input_schema.get("properties", {}) == {}
-    schema = tools["get_fact_sheet"].input_schema
-    assert list(schema["properties"]) == ["site"]
-    assert schema["required"] == ["site"] and schema["properties"]["site"]["maxLength"] == 64
+    for name in ("get_fact_sheet", "get_anomalies"):
+        schema = tools[name].input_schema
+        assert list(schema["properties"]) == ["site"]
+        assert schema["required"] == ["site"] and schema["properties"]["site"]["maxLength"] == 64
 
 
 def test_the_server_names_itself_and_explains_how_to_use_it() -> None:
@@ -154,7 +155,11 @@ def test_a_real_client_can_start_the_server_as_a_subprocess_and_use_it() -> None
             return client.server_info.name, [t.name for t in tools.tools], sheet, bad
 
     name, tools, sheet, bad = asyncio.run(asyncio.wait_for(go(), timeout=60))
-    assert name == SERVER_NAME and sorted(tools) == ["get_fact_sheet", "list_sites"]
+    assert name == SERVER_NAME and sorted(tools) == [
+        "get_anomalies",
+        "get_fact_sheet",
+        "list_sites",
+    ]
     expected = build_fact_sheet(SOURCE("demo-hotel")).facts[0].display
     assert sheet.structured_content["facts"][0]["display"] == expected
     assert bad.is_error
@@ -169,3 +174,53 @@ def test_the_check_command_reports_tools_and_figures(capsys) -> None:
     assert "tool: get_fact_sheet (read only: True)" in out
     expected = build_fact_sheet(SOURCE("demo-office")).facts[0].display
     assert f"demo-office: Total energy over all 1344 readings: {expected} (10 facts)" in out
+
+
+# --------------------------------------------------------------- the anomaly tool
+
+
+def test_get_anomalies_returns_no_events_for_clean_demo_data_and_says_how_much_was_judged() -> None:
+    result = call("get_anomalies", {"site": "demo-hotel"})
+    assert not result.is_error
+    body = result.structured_content
+    assert body["anomalies"] == [] and body["judged_readings"] == 14 * 96
+    assert body["unjudged_readings"] == 0 and "not faults" in body["note"]
+
+
+def test_get_anomalies_reports_an_injected_event_with_rounded_figures() -> None:
+    from dataclasses import replace
+    from datetime import timedelta
+
+    base = list(SOURCE("demo-hotel"))
+    start = base[0].timestamp + timedelta(days=2, hours=2)
+    bumped = [
+        replace(r, power_kw=r.power_kw + 40.0)
+        if start <= r.timestamp < start + timedelta(hours=1)
+        else r
+        for r in base
+    ]
+
+    async def go():
+        server = create_server(source=lambda site: bumped, sites=("demo-hotel",))
+        async with Client(server) as client:
+            return await client.call_tool("get_anomalies", {"site": "demo-hotel"})
+
+    body = asyncio.run(go()).structured_content
+    (event,) = body["anomalies"]
+    assert event["id"] == "A1" and event["kind"] == "spike" and event["intervals"] == 4
+    assert event["start"] == start.isoformat()
+    assert 35 < event["peak_deviation_kw"] < 45 and 35 < event["energy_difference_kwh"] < 45
+
+
+def test_get_anomalies_has_the_same_loud_failures_as_the_fact_sheet_tool() -> None:
+    assert call("get_anomalies", {"site": "not-a-site"}).is_error
+    assert call("get_anomalies", {}).is_error
+    assert call("get_anomalies", {"path": "/etc/passwd"}).is_error
+
+    async def go():
+        server = create_server(source=lambda site: [], sites=("empty",))
+        async with Client(server) as client:
+            return await client.call_tool("get_anomalies", {"site": "empty"})
+
+    result = asyncio.run(go())
+    assert result.is_error and "unusable_data" in result.content[0].text

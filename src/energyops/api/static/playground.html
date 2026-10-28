@@ -17,6 +17,10 @@
 
   <main class="layout">
     <section class="card" aria-labelledby="agent-title">
+      <div class="row">
+        <label for="agent-picker">Agent</label>
+        <select id="agent-picker"></select>
+      </div>
       <div class="agent-head">
         <div>
           <h1 id="agent-title">Loading agent</h1>
@@ -63,10 +67,14 @@
         <datalist id="site-options"><option value="demo-hotel"><option value="demo-office"></datalist>
       </div>
 
-      <div class="row">
+      <div class="row" id="question-row">
         <label for="question">Test input</label>
         <textarea id="question" rows="3" maxlength="500"></textarea>
         <div class="between"><div class="examples" id="examples"></div><span class="muted small" id="count"></span></div>
+      </div>
+      <div class="row" id="audience-row" hidden>
+        <label for="audience">Who is the report for?</label>
+        <select id="audience"></select>
       </div>
 
       <div class="actions">
