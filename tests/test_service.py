@@ -415,7 +415,9 @@ async def test_a_run_that_fails_its_checks_is_still_stored(seeded: Database) -> 
 async def test_a_switched_off_agent_cannot_be_run_or_listed(
     api: httpx.AsyncClient, seeded: Database
 ) -> None:
-    assert len((await api.get("/agents", headers=as_user(MANAGER))).json()) == len(AGENTS)
+    assert len((await api.get("/agents", headers=as_user(MANAGER))).json()) == len(
+        [a for a in AGENTS.values() if a.direct]
+    )
     async with seeded.session(Scope.platform_wide()) as session:
         await repo.set_agent_overrides(
             session, "savings-advisor", {"status": "draft", "provider": "test"}, None

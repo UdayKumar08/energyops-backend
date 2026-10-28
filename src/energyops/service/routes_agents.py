@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -17,9 +18,15 @@ from energyops.config import Environment
 from energyops.db import repo
 from energyops.security.permissions import Permission
 from energyops.security.principal import Principal
-from energyops.service.agent_config import InvalidOverrides, effective_spec, provider_for
-from energyops.service.data import SiteNotFound, load_site, sources_for
+from energyops.service.agent_config import (
+    InvalidOverrides,
+    ProviderName,
+    effective_spec,
+    provider_for,
+)
+from energyops.service.data import SiteData, SiteNotFound, load_site, sources_for
 from energyops.service.deps import needs, state_of
+from energyops.service.state import ServiceState
 
 router = APIRouter()
 
@@ -59,24 +66,23 @@ async def effective(request: Request, principal: Principal, entry: AgentEntry) -
 async def list_agents(
     principal: Annotated[Principal, Depends(needs(Permission.RUN_AGENTS))], request: Request
 ) -> list[AgentSummary]:
-    """The agents a person can run: only those a platform admin has switched on."""
+    """The agents a person can run: only those a platform admin has switched on. The supervisor
+    is used through the assistant, not listed here."""
     summaries = []
     for entry in AGENTS.values():
+        if not entry.direct:
+            continue
         spec = await effective(request, principal, entry)
         if spec.status is AgentStatus.ACTIVE:
             summaries.append(summarise(entry, spec))
     return summaries
 
 
-@router.post("/agents/{agent_id}/runs")
-async def run_agent(
-    agent_id: str,
-    body: PlatformRunRequest,
-    principal: Annotated[Principal, Depends(needs(Permission.RUN_AGENTS))],
-    request: Request,
-) -> RunRecord:
-    """Run one agent on one of the caller's sites. A run that fails its checks is still a 200
-    with status 'failed', and it is stored like any other."""
+async def resolve_agent(
+    request: Request, principal: Principal, agent_id: str
+) -> tuple[AgentEntry, AgentSpec, ProviderName]:
+    """The agent, its settings applied, and the provider it will run on. Raises an
+    HTTPException that is safe to show when it cannot run."""
     state = state_of(request)
     entry = entry_for(agent_id)
     spec = await effective(request, principal, entry)
@@ -87,20 +93,22 @@ async def run_agent(
         raise HTTPException(
             status_code=503, detail="No model is set up for this agent. Ask a platform admin."
         )
-    try:
-        site_data = await load_site(state.db, principal, body.site)
-    except SiteNotFound:
-        raise HTTPException(status_code=404, detail="No site with that name.") from None
+    return entry, spec, provider
+
+
+async def run_for_caller(
+    state: ServiceState,
+    principal: Principal,
+    entry: AgentEntry,
+    spec: AgentSpec,
+    provider: ProviderName,
+    site_data: SiteData,
+    inputs: RunInputs,
+) -> RunRecord:
+    """Run one agent on the caller's data, store the run and write the audit event."""
     data = sources_for(site_data)
     try:
-        run_request = entry.make_request(
-            RunInputs(
-                site=site_data.site.slug,
-                question=body.question,
-                audience=body.audience,
-                anomaly_id=body.anomaly_id,
-            )
-        )
+        run_request = entry.make_request(replace(inputs, site=site_data.site.slug))
     except InvalidRunInput as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     try:
@@ -132,6 +140,32 @@ async def run_agent(
             },
         )
     return record
+
+
+@router.post("/agents/{agent_id}/runs")
+async def run_agent(
+    agent_id: str,
+    body: PlatformRunRequest,
+    principal: Annotated[Principal, Depends(needs(Permission.RUN_AGENTS))],
+    request: Request,
+) -> RunRecord:
+    """Run one agent on one of the caller's sites. A run that fails its checks is still a 200
+    with status 'failed', and it is stored like any other."""
+    state = state_of(request)
+    entry, spec, provider = await resolve_agent(request, principal, agent_id)
+    if not entry.direct:
+        raise HTTPException(status_code=400, detail="Ask this agent through the assistant.")
+    try:
+        site_data = await load_site(state.db, principal, body.site)
+    except SiteNotFound:
+        raise HTTPException(status_code=404, detail="No site with that name.") from None
+    inputs = RunInputs(
+        site=site_data.site.slug,
+        question=body.question,
+        audience=body.audience,
+        anomaly_id=body.anomaly_id,
+    )
+    return await run_for_caller(state, principal, entry, spec, provider, site_data, inputs)
 
 
 async def _visible_slugs(request: Request, principal: Principal) -> list[str] | None:

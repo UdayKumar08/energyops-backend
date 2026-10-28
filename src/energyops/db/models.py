@@ -237,4 +237,41 @@ TENANT_TABLES = (
     "readings",
     "tariffs",
     "runs",
+    "tickets",
 )
+
+
+class Ticket(Base):
+    """A maintenance ticket drafted from an event and waiting for, or given, a person's decision.
+
+    Nothing is sent to an outside ticketing system: this table is the whole record. `id` is also
+    the id of the approval graph's saved state, so a ticket can only be resumed by someone who
+    could first read this row (which row level security and the site filter control)."""
+
+    __tablename__ = "tickets"
+    __table_args__ = (
+        CheckConstraint("priority in ('low', 'medium', 'high')", name="priority"),
+        CheckConstraint("status in ('pending_approval', 'approved', 'rejected')", name="status"),
+        Index("ix_tickets_org_status", "org_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    site_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sites.id", ondelete="CASCADE"))
+    anomaly_id: Mapped[str | None] = mapped_column(String(8))
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text)
+    priority: Mapped[str] = mapped_column(String(8))
+    evidence: Mapped[list[Any]] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
+    status: Mapped[str] = mapped_column(String(20))
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = created_at()
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    decided_at: Mapped[datetime | None] = mapped_column()
+    decision_note: Mapped[str | None] = mapped_column(Text)

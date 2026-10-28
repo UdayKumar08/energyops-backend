@@ -4,6 +4,8 @@
         [--save FILE] [--via mcp]
         [--agent energy-analyst|report-writer|anomaly-investigator|savings-advisor]
 
+The supervisor has its own check: python -m energyops.agents.supervisor_evals.
+
 It reads the key from your environment or local .env and never prints it. Each question is a
 real call (or two, when the first answer is rejected and sent back), so it uses a little of your
 free quota. The calls run one after another.
@@ -348,7 +350,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     parser.add_argument(
         "--agent",
-        choices=tuple(AGENTS),
+        choices=tuple(a for a in AGENTS if AGENTS[a].direct),
         default="energy-analyst",
         help="which agent to evaluate (default: energy-analyst)",
     )

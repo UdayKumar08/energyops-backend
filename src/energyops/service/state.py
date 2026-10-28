@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from energyops.api.providers import ProviderId, make_client
 from energyops.config import Environment
+from energyops.db.checkpoint import Checkpointing
 from energyops.db.session import Database
 from energyops.models.base import ModelClient
 from energyops.models.credentials import ProviderKeys
@@ -24,3 +25,9 @@ class ServiceState:
     local_tokens: LocalTokens | None = None
     keys: Callable[[], ProviderKeys] = ProviderKeys
     client_factory: ClientFactory = make_client
+    # The approval graph's saved state; opened on first use.
+    checkpointing: Checkpointing | None = None
+
+    async def close(self) -> None:
+        if self.checkpointing is not None:
+            await self.checkpointing.close()

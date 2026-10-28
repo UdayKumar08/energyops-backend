@@ -17,6 +17,15 @@ from energyops.agents.registry import AGENTS, AgentEntry, DataSources, InvalidRu
 from energyops.agents.runs import RunRecord
 from energyops.agents.sources import demo_tariff_source, synthetic_demo_source
 from energyops.agents.spec import AgentSpec, load_prompt, unimplemented_guardrails
+from energyops.agents.supervisor import (
+    EventBrief,
+    Supervisor,
+    SupervisorRequest,
+    SupervisorTools,
+    ToolRefused,
+    keyword_route,
+)
+from energyops.anomalies import detect_anomalies
 from energyops.api.providers import ProviderId, ProviderInfo, ProviderUnavailable, provider_infos
 from energyops.api.views import AgentDetail, AgentSummary, PromptView, summarise
 from energyops.db import repo
@@ -182,6 +191,8 @@ async def playground(
     readings = synthetic_demo_source()
     tariffs = demo_tariff_source()
     data = DataSources(readings, tariffs, create_server(source=readings, tariffs=tariffs))
+    if not entry.direct:
+        return await _supervisor_playground(request, principal, body, entry.spec, stored, data)
     try:
         run_request = entry.make_request(
             RunInputs(
@@ -211,6 +222,77 @@ async def playground(
         principal,
         "agent.playground_run",
         agent_id,
+        {"provider": record.model_provider, "status": record.status.value},
+    )
+    return record
+
+
+async def _supervisor_playground(
+    request: Request,
+    principal: Principal,
+    body: PlaygroundRequest,
+    built_in: AgentSpec,
+    stored: dict[str, Any],
+    data: DataSources,
+) -> RunRecord:
+    """Try the supervisor on the demo sites. Agents it calls run on demo data too and are not
+    stored; tickets, forecasts and documents are not available here because they need a real
+    organisation."""
+    state = state_of(request)
+    if not body.question:
+        raise HTTPException(status_code=422, detail="This agent needs a question.")
+    spec = effective_spec(built_in, stored)
+    all_stored = await _overrides(request, principal)
+
+    async def run_agent(agent_id: str, inputs: RunInputs) -> RunRecord:
+        child = AGENTS[agent_id]
+        child_spec = effective_spec(child.spec, all_stored.get(agent_id))
+        child_request = child.make_request(inputs)
+        try:
+            reply = child.test_reply(data, child_request)
+        except (LookupError, ValueError):
+            reply = "{}"
+        try:
+            client = state.client_factory(
+                body.provider, body.model or child_spec.config.model.name, state.keys(), reply
+            )
+        except ProviderUnavailable as exc:
+            raise ToolRefused(str(exc)) from None
+        facts = child.make_facts(child_spec, body.data_access, data)
+        return await child.build(child_spec, client, facts).run(child_request)
+
+    async def events() -> list[EventBrief]:
+        found = detect_anomalies(data.readings(body.site)).anomalies
+        return [EventBrief(e.id, e.kind, e.start.isoformat()) for e in found]
+
+    async def draft_ticket(anomaly_id: str) -> dict[str, Any]:
+        raise ToolRefused(
+            "Tickets are not drafted in the playground, because they need a real site."
+        )
+
+    tools = SupervisorTools(
+        permissions=frozenset(Permission) - {Permission.ADMIN_PLATFORM},
+        run_agent=run_agent,
+        events=events,
+        draft_ticket=draft_ticket,
+        site=body.site,
+    )
+    request_ = SupervisorRequest(question=body.question, site=body.site)
+    try:
+        client = state.client_factory(
+            body.provider,
+            body.model or spec.config.model.name,
+            state.keys(),
+            keyword_route(body.question),
+        )
+    except ProviderUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+    record = await Supervisor(spec, client, tools).run(request_)
+    await _audit(
+        request,
+        principal,
+        "agent.playground_run",
+        "supervisor",
         {"provider": record.model_provider, "status": record.status.value},
     )
     return record

@@ -10,12 +10,16 @@ from sqlalchemy import create_engine, pool
 
 from energyops.db import models  # noqa: F401  (registers the tables on the metadata)
 from energyops.db.base import Base
+from energyops.db.checkpoint import CHECKPOINT_TABLES
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
+# Tables that are not ours to migrate: Alembic's own, and the ones LangGraph's Postgres saver
+# creates for itself (see energyops/db/checkpoint.py).
+UNMANAGED_TABLES = CHECKPOINT_TABLES | {"alembic_version"}
 
 
 def database_url() -> str:
@@ -41,7 +45,7 @@ def run_migrations_online() -> None:
             compare_type=True,
             # Hand-written statements (policies, functions, grants) are not tables or columns.
             include_object=lambda obj, name, type_, reflected, compare_to: (
-                not (type_ == "table" and name in {"alembic_version"})
+                not (type_ == "table" and name in UNMANAGED_TABLES)
             ),
         )
         with context.begin_transaction():

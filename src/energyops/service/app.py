@@ -17,12 +17,20 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from energyops.api.providers import make_client
 from energyops.config import Environment, Settings, get_settings
+from energyops.db.checkpoint import Checkpointing
 from energyops.db.session import Database
 from energyops.models.credentials import ProviderKeys
 from energyops.security.permissions import Forbidden
 from energyops.security.tokens import TokenVerifier
 from energyops.security.verifier import local_tokens_from, verifier_from
-from energyops.service import routes_admin, routes_agents, routes_basic, routes_org
+from energyops.service import (
+    routes_admin,
+    routes_agents,
+    routes_assistant,
+    routes_basic,
+    routes_org,
+    routes_tickets,
+)
 from energyops.service.state import ClientFactory, ServiceState
 
 LOCAL_HOSTS = ["127.0.0.1", "localhost", "testserver"]
@@ -45,11 +53,13 @@ def create_service_app(
         local_tokens=local_tokens_from(chosen),
         keys=keys,
         client_factory=client_factory,
+        checkpointing=Checkpointing(chosen.database_url.get_secret_value()),
     )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
+        await state.close()
         await database.dispose()
 
     app = FastAPI(title="EnergyOps platform API", version="0.2.0", lifespan=lifespan)
@@ -77,6 +87,8 @@ def create_service_app(
 
     app.include_router(routes_basic.router)
     app.include_router(routes_agents.router)
+    app.include_router(routes_assistant.router)
+    app.include_router(routes_tickets.router)
     app.include_router(routes_org.router)
     app.include_router(routes_admin.router)
     return app

@@ -23,6 +23,7 @@ from energyops.agents.energy_analyst_evals import good_reply
 from energyops.agents.event_facts import DirectEventFacts, McpEventFacts
 from energyops.agents.fact_sources import DirectFactSheets, McpFactSheets, McpTarget
 from energyops.agents.pipeline import AgentRequest, GroundedAgent, HasVia
+from energyops.agents.registry_types import RunInputs as RunInputs
 from energyops.agents.report_writer import REPORT_WRITER_SPEC, ReportRequest, ReportWriter
 from energyops.agents.report_writer_evals import good_report_reply
 from energyops.agents.savings_advisor import SAVINGS_ADVISOR_SPEC, SavingsAdvisor, SavingsRequest
@@ -30,6 +31,11 @@ from energyops.agents.savings_advisor_evals import good_savings_reply, savings_s
 from energyops.agents.savings_facts import DirectSavingsFacts, McpSavingsFacts
 from energyops.agents.sources import ReadingsSource, TariffSource
 from energyops.agents.spec import AgentSpec
+from energyops.agents.supervisor import (
+    SUPERVISOR_SPEC,
+    SupervisorRequest,
+    keyword_route,
+)
 from energyops.facts import build_fact_sheet
 from energyops.models.base import ModelClient
 
@@ -53,16 +59,6 @@ class DataSources:
 
 
 @dataclass(frozen=True, slots=True)
-class RunInputs:
-    """Everything a person can supply for a run. Each agent uses only what it takes."""
-
-    site: str | None = None
-    question: str | None = None
-    audience: str | None = None
-    anomaly_id: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class Example:
     label: str
     value: str
@@ -80,6 +76,9 @@ class AgentEntry:
     make_facts: Callable[[AgentSpec, DataAccess, DataSources], HasVia]
     # The canned correct answer the labelled test adapter gives for this request.
     test_reply: Callable[[DataSources, AgentRequest], str]
+    # False for an agent that is not run on its own: the supervisor needs the caller's tools, so
+    # it is run through the assistant (see service/assistant.py).
+    direct: bool = True
 
 
 def _only(inputs: RunInputs, takes: str) -> None:
@@ -147,6 +146,28 @@ def _savings_request(inputs: RunInputs) -> AgentRequest:
     return SavingsRequest(site=inputs.site)
 
 
+def _supervisor_request(inputs: RunInputs) -> AgentRequest:
+    _only(inputs, "question")
+    if not inputs.question:
+        raise InvalidRunInput("This agent needs a question.")
+    return SupervisorRequest(question=inputs.question, site=inputs.site)
+
+
+def _supervisor_build(spec: AgentSpec, model: ModelClient, facts: Any) -> Any:
+    raise NotImplementedError(
+        "The supervisor is run through the assistant, with the caller's tools."
+    )
+
+
+def _supervisor_facts(spec: AgentSpec, access: DataAccess, data: DataSources) -> HasVia:
+    raise NotImplementedError("The supervisor reads no fact sheet of its own.")
+
+
+def _supervisor_reply(data: DataSources, request: AgentRequest) -> str:
+    assert isinstance(request, SupervisorRequest)
+    return keyword_route(request.question)
+
+
 def _analyst_reply(data: DataSources, request: AgentRequest) -> str:
     return good_reply(build_fact_sheet(data.readings(request.site)))
 
@@ -212,6 +233,22 @@ AGENT_ENTRIES: tuple[AgentEntry, ...] = (
         make_request=_savings_request,
         make_facts=_savings_facts,
         test_reply=_savings_reply,
+    ),
+    AgentEntry(
+        id="supervisor",
+        spec=SUPERVISOR_SPEC,
+        input_kind="question",
+        examples=(
+            Example("A cost question", "How much could we save on our energy bill?"),
+            Example("A forecast", "What will demand be next week?"),
+            Example("A ticket", "Raise a ticket for event A1."),
+            Example("Out of scope", "Write me a poem about winter."),
+        ),
+        build=_supervisor_build,
+        make_request=_supervisor_request,
+        make_facts=_supervisor_facts,
+        test_reply=_supervisor_reply,
+        direct=False,
     ),
 )
 

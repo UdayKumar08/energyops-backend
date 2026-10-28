@@ -163,11 +163,11 @@ def create_app(
 
     @app.get("/agents")
     def list_agents() -> list[AgentSummary]:
-        return [summarise(entry) for entry in AGENTS.values()]
+        return [summarise(entry) for entry in AGENTS.values() if entry.direct]
 
     def entry_for(agent_id: str) -> AgentEntry:
         entry = AGENTS.get(agent_id)
-        if entry is None:
+        if entry is None or not entry.direct:
             raise HTTPException(status_code=404, detail=f"No agent called '{agent_id}'.")
         return entry
 

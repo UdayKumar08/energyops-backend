@@ -24,6 +24,7 @@ from energyops.db.models import (
     Reading,
     Run,
     Site,
+    Ticket,
     User,
     UserSiteAccess,
 )
@@ -519,3 +520,100 @@ async def list_audit(
         else query.where(AuditEvent.org_id.is_(None))
     )
     return list((await session.execute(query)).scalars())
+
+
+# ------------------------------------------------------------------ tickets
+
+
+async def create_ticket(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    *,
+    ticket_id: uuid.UUID,
+    site_id: uuid.UUID,
+    created_by: uuid.UUID,
+    anomaly_id: str | None,
+    draft: dict[str, Any],
+) -> Ticket:
+    ticket = Ticket(
+        id=ticket_id,
+        org_id=org_id,
+        site_id=site_id,
+        anomaly_id=anomaly_id,
+        title=draft["title"],
+        description=draft["description"],
+        priority=draft["priority"],
+        evidence=list(draft["evidence"]),
+        status="pending_approval",
+        created_by=created_by,
+    )
+    session.add(ticket)
+    await session.flush()
+    return ticket
+
+
+async def list_tickets(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    only: frozenset[uuid.UUID] | None,
+    *,
+    status: str | None = None,
+    limit: int = 100,
+) -> list[tuple[Ticket, Site]]:
+    query = (
+        select(Ticket, Site)
+        .join(Site, Site.id == Ticket.site_id)
+        .where(Ticket.org_id == org_id)
+        .order_by(Ticket.created_at.desc())
+        .limit(limit)
+    )
+    if only is not None:
+        query = query.where(Ticket.site_id.in_(only))
+    if status is not None:
+        query = query.where(Ticket.status == status)
+    return [(t, s) for t, s in (await session.execute(query)).all()]
+
+
+async def get_ticket(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    ticket_id: uuid.UUID,
+    only: frozenset[uuid.UUID] | None,
+    *,
+    lock: bool = False,
+) -> tuple[Ticket, Site] | None:
+    """A ticket and its site, or None when it is missing or the person may not see its site.
+    `lock` holds the row until the transaction ends, so two decisions cannot both be applied."""
+    query = (
+        select(Ticket, Site)
+        .join(Site, Site.id == Ticket.site_id)
+        .where(Ticket.org_id == org_id, Ticket.id == ticket_id)
+    )
+    if only is not None:
+        query = query.where(Ticket.site_id.in_(only))
+    if lock:
+        query = query.with_for_update(of=Ticket)
+    row = (await session.execute(query)).first()
+    return (row[0], row[1]) if row else None
+
+
+async def pending_ticket_for_event(
+    session: AsyncSession, org_id: uuid.UUID, site_id: uuid.UUID, anomaly_id: str
+) -> Ticket | None:
+    return (
+        await session.execute(
+            select(Ticket).where(
+                Ticket.org_id == org_id,
+                Ticket.site_id == site_id,
+                Ticket.anomaly_id == anomaly_id,
+                Ticket.status == "pending_approval",
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def user_names(session: AsyncSession, ids: Collection[uuid.UUID]) -> dict[uuid.UUID, str]:
+    if not ids:
+        return {}
+    rows = await session.execute(select(User.id, User.display_name).where(User.id.in_(ids)))
+    return {i: n for i, n in rows}

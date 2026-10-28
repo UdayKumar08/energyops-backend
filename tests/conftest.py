@@ -8,6 +8,7 @@ make a missing database a failure instead of a skip.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator
 
@@ -18,6 +19,7 @@ import pytest_asyncio
 from alembic import command
 from alembic.config import Config
 
+from energyops.db.checkpoint import setup_checkpointer
 from energyops.db.session import Database
 
 OWNER_URL = os.environ.get(
@@ -67,6 +69,7 @@ def migrated_db() -> str:
     config = Config("alembic.ini")
     config.attributes["url"] = OWNER_URL
     command.upgrade(config, "head")
+    asyncio.run(setup_checkpointer(OWNER_URL))
     return OWNER_URL
 
 
@@ -119,6 +122,10 @@ async def api(seeded: Database) -> AsyncIterator[httpx.AsyncClient]:
     """A client for the platform API, talking to the app in process."""
     from service_helpers import make_app
 
-    transport = httpx.ASGITransport(app=make_app(seeded))
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        yield client
+    app = make_app(seeded)
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            yield client
+    finally:
+        await app.state.service.close()

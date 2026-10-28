@@ -16,6 +16,7 @@ from energyops.agents.runs import RunRecord
 from energyops.agents.sources import DEMO_TARIFFS, synthetic_demo_source
 from energyops.db import repo
 from energyops.db.base import Base
+from energyops.db.checkpoint import CHECKPOINT_TABLES
 from energyops.db.models import TENANT_TABLES, Run
 from energyops.db.seed import DEMO_ORGS, PLATFORM_EMAIL, seed_demo
 from energyops.db.session import Database, Scope
@@ -51,7 +52,9 @@ def test_the_migrations_match_the_models(migrated_db: str) -> None:
     unexpected = [
         d
         for d in differences
-        if "created_at desc" not in str(d) and "started_at desc" not in str(d)
+        if "created_at desc" not in str(d)
+        and "started_at desc" not in str(d)
+        and not any(table in str(d) for table in CHECKPOINT_TABLES)  # LangGraph's, not ours
     ]
     assert unexpected == []
 
@@ -91,7 +94,9 @@ async def test_every_table_with_an_organisation_has_row_level_security(db: Datab
             )
         ).all()
     unprotected = sorted(name for name, secured in rows if not secured)
-    assert unprotected == []
+    # LangGraph's saved state has no organisation column, so row level security cannot apply to
+    # it. It is reached only for a ticket id read through the protected tickets table first.
+    assert set(unprotected) == set(CHECKPOINT_TABLES)
     names = {name for name, _ in rows}
     assert set(TENANT_TABLES) <= names
 
