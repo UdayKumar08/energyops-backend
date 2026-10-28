@@ -16,11 +16,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from energyops.agents.fact_sources import DirectFactSheets, McpFactSheets, McpTarget
+from energyops.agents.fact_sources import McpTarget
 from energyops.agents.registry import AGENTS, AgentEntry, InvalidRunInput, RunInputs
 from energyops.agents.runs import RunRecord, RunStatus
 from energyops.agents.sources import ReadingsSource, synthetic_demo_source
 from energyops.agents.spec import load_prompt, unimplemented_guardrails
+from energyops.anomalies import detect_anomalies
 from energyops.api.providers import (
     ProviderId,
     ProviderInfo,
@@ -30,7 +31,7 @@ from energyops.api.providers import (
 )
 from energyops.api.store import RunStore
 from energyops.config import Environment
-from energyops.facts import build_fact_sheet
+from energyops.mcp_servers.schema import AnomalyListModel
 from energyops.models.base import ModelClient
 from energyops.models.credentials import ProviderKeys
 
@@ -100,6 +101,7 @@ class RunRequest(BaseModel):
     # Which of these an agent takes depends on its input kind (see GET /agents).
     question: str | None = Field(default=None, min_length=1, max_length=500)
     audience: str | None = Field(default=None, max_length=32)
+    anomaly_id: str | None = Field(default=None, max_length=8)
     site: str | None = Field(default=None, max_length=64)
     provider: ProviderId = "test"
     # "mcp": the agent calls the read-only energy MCP server (a subprocess). "direct": plain Python.
@@ -146,7 +148,12 @@ def _input_label(record: RunRecord) -> str:
     if question:
         return str(question)
     audience = record.input.get("audience")
-    return f"Report for {audience}" if audience else ""
+    if audience:
+        return f"Report for {audience}"
+    event = record.input.get("anomaly_id")
+    return (
+        f"Investigate {event} at {record.input.get('site') or 'the default site'}" if event else ""
+    )
 
 
 def _run_summary(record: RunRecord) -> RunSummary:
@@ -220,6 +227,16 @@ def create_app(
     def providers() -> list[ProviderInfo]:
         return provider_infos(current_keys())
 
+    @app.get("/anomalies")
+    def anomalies(site: str | None = Query(default=None, max_length=64)) -> AnomalyListModel:
+        """The events the detector finds for a site, so one can be chosen to investigate."""
+        try:
+            return AnomalyListModel.from_result(detect_anomalies(readings(site)))
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except ValueError as exc:  # EnergyDataError is a ValueError
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+
     @app.get("/agents")
     def list_agents() -> list[AgentSummary]:
         return [_summarise(entry) for entry in AGENTS.values()]
@@ -249,23 +266,24 @@ def create_app(
         spec = entry.spec
         try:
             request = entry.make_request(
-                RunInputs(site=body.site, question=body.question, audience=body.audience)
+                RunInputs(
+                    site=body.site,
+                    question=body.question,
+                    audience=body.audience,
+                    anomaly_id=body.anomaly_id,
+                )
             )
         except InvalidRunInput as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
         try:
-            test_reply = entry.test_reply(build_fact_sheet(readings(body.site)))
+            test_reply = entry.test_reply(readings, request)
         except (LookupError, ValueError):
             test_reply = "{}"  # the agent will report the unknown site or unusable data itself
         try:
             client = client_factory(body.provider, body.model, current_keys(), test_reply)
         except ProviderUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from None
-        facts = (
-            McpFactSheets(spec, mcp_target)
-            if body.data_access == "mcp"
-            else DirectFactSheets(readings)
-        )
+        facts = entry.make_facts(spec, body.data_access, readings, mcp_target)
         record = await entry.build(spec, client, facts).run(request)
         runs.add(record)
         return record
