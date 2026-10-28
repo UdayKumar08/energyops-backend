@@ -7,6 +7,7 @@ from energyops.agents import live_eval
 from energyops.agents.energy_analyst_evals import good_reply
 from energyops.agents.live_eval import (
     CASES_BY_AGENT,
+    INVESTIGATION_CASES,
     LIVE_CASES,
     REPORT_CASES,
     evaluate,
@@ -167,7 +168,8 @@ def test_every_report_case_passes_with_a_grounded_report_and_is_sent_as_an_audie
 def test_the_report_cases_cover_both_audiences_and_both_sites_and_are_registered() -> None:
     assert {c.audience for c in REPORT_CASES} == {"manager", "technical"}
     assert {c.site for c in REPORT_CASES} == {"demo-hotel", "demo-office"}
-    assert CASES_BY_AGENT == {"energy-analyst": LIVE_CASES, "report-writer": REPORT_CASES}
+    assert CASES_BY_AGENT["energy-analyst"] == LIVE_CASES
+    assert CASES_BY_AGENT["report-writer"] == REPORT_CASES
     assert len({c.name for c in REPORT_CASES}) == len(REPORT_CASES)
 
 
@@ -195,3 +197,53 @@ def test_an_unknown_agent_is_refused_by_the_argument_parser() -> None:
     with pytest.raises(SystemExit) as exit_info:
         live_eval.main(["gemini", "--agent", "supervisor"])
     assert exit_info.value.code == 2
+
+
+# ------------------------------------------------------------ the investigator's cases
+
+
+def _investigation_replies() -> list[str]:
+    from energyops.agents.anomaly_investigator_evals import (
+        event_sheet_for,
+        good_investigation_reply,
+    )
+
+    return [
+        good_investigation_reply(
+            event_sheet_for(synthetic_demo_source(), "demo-clinic", c.anomaly_id)
+        )
+        for c in INVESTIGATION_CASES
+    ]
+
+
+def test_the_investigation_cases_pass_with_grounded_answers_and_are_sent_as_event_ids() -> None:
+    adapter = TestAdapter(replies=_investigation_replies())
+    results = asyncio.run(evaluate(adapter, INVESTIGATION_CASES, agent="anomaly-investigator"))
+    assert [r.passed for r in results] == [True, True]
+    assert [r.record.input["anomaly_id"] for r in results] == ["A1", "A2"]
+    assert all("question" not in r.record.input for r in results)
+    shown = format_report(results, show=True)
+    assert "hypothesis [F1, F6] (low): " in shown and "check: " in shown
+
+
+def test_the_investigation_cases_are_registered_and_target_the_invented_clinic() -> None:
+    assert CASES_BY_AGENT["anomaly-investigator"] == INVESTIGATION_CASES
+    assert {c.site for c in INVESTIGATION_CASES} == {"demo-clinic"}
+    assert [c.anomaly_id for c in INVESTIGATION_CASES] == ["A1", "A2"]
+
+
+def test_run_evaluates_the_investigator_through_mcp_when_asked(tmp_path) -> None:
+    out = tmp_path / "inv.json"
+    code = asyncio.run(
+        live_eval.run(
+            "gemini",
+            client=TestAdapter(replies=_investigation_replies()),
+            save=out,
+            agent="anomaly-investigator",
+            via="mcp",
+        )
+    )
+    saved = json.loads(out.read_text(encoding="utf-8"))
+    assert code == 0 and [r["passed"] for r in saved] == [True, True]
+    steps = [s for s in saved[0]["record"]["steps"] if s["name"] == "tool_call"]
+    assert [s["data"]["tool"] for s in steps] == ["get_anomalies", "get_fact_sheet"]

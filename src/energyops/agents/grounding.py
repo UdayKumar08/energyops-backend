@@ -7,6 +7,10 @@ computed percentage, and the sign is ignored because words like "lower" carry it
 must match the days-covered fact. Other units and every currency amount are rejected, because the
 fact sheet holds no such figures. Plain numbers without a unit, such as dates, times and fact
 ids, are not figures and are skipped.
+
+Minutes are checked only when the fact sheet holds a figure in minutes, which today is only an
+anomaly event's duration. For every other sheet a number of minutes is skipped as before, so
+adding this changed nothing for the agents that have no such fact.
 """
 
 from __future__ import annotations
@@ -20,10 +24,20 @@ _DATETIME = re.compile(r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:[+-]\d
 _CLOCK = re.compile(r"\b\d{1,2}:\d{2}\b")
 _FIGURE = re.compile(
     r"(?P<cur>[£$€])?\s?(?P<num>\d[\d,]*(?:\.\d+)?)[\s-]?"
-    r"(?P<unit>kWh|MWh|GWh|kW|MW|GW|W|%|days?)?(?![A-Za-z])",
+    r"(?P<unit>kWh|MWh|GWh|kW|MW|GW|W|%|days?|minutes?|mins?)?(?![A-Za-z])",
     re.IGNORECASE,
 )
-_CHECKED_UNITS = {"kwh": "kWh", "kw": "kW", "%": "%", "day": "days", "days": "days"}
+_CHECKED_UNITS = {
+    "kwh": "kWh",
+    "kw": "kW",
+    "%": "%",
+    "day": "days",
+    "days": "days",
+    "min": "minutes",
+    "mins": "minutes",
+    "minute": "minutes",
+    "minutes": "minutes",
+}
 
 
 def _clean(text: str) -> str:
@@ -42,6 +56,10 @@ def check_text(text: str, sheet: FactSheet) -> list[str]:
             problems.append(f"'{shown}': the fact sheet has no cost figures")
             continue
         if not unit:
+            continue
+        if _CHECKED_UNITS.get(unit) == "minutes" and not any(
+            f.unit == "minutes" for f in sheet.facts
+        ):
             continue
         if unit not in _CHECKED_UNITS:
             problems.append(f"'{shown}': use kWh, kW, % or days exactly as in the fact sheet")

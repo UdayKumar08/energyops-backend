@@ -64,13 +64,18 @@
       <div class="row">
         <label for="site">Site <span class="muted">(optional)</span></label>
         <input id="site" type="text" maxlength="64" list="site-options" autocomplete="off" placeholder="demo-hotel">
-        <datalist id="site-options"><option value="demo-hotel"><option value="demo-office"></datalist>
+        <datalist id="site-options"><option value="demo-hotel"><option value="demo-office"><option value="demo-clinic"></datalist>
       </div>
 
       <div class="row" id="question-row">
         <label for="question">Test input</label>
         <textarea id="question" rows="3" maxlength="500"></textarea>
         <div class="between"><div class="examples" id="examples"></div><span class="muted small" id="count"></span></div>
+      </div>
+      <div class="row" id="event-row" hidden>
+        <label for="event">Event to investigate</label>
+        <select id="event"></select>
+        <p class="muted small" id="event-note"></p>
       </div>
       <div class="row" id="audience-row" hidden>
         <label for="audience">Who is the report for?</label>

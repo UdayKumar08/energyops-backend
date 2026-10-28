@@ -76,7 +76,11 @@ def test_health_reports_the_environment() -> None:
 
 def test_agents_are_listed_with_registry_style_fields() -> None:
     agents = client_for().get("/agents").json()
-    assert [a["id"] for a in agents] == ["energy-analyst", "report-writer"]
+    assert [a["id"] for a in agents] == [
+        "energy-analyst",
+        "report-writer",
+        "anomaly-investigator",
+    ]
     agent = agents[0]
     assert agent["status"] == "draft" and agent["prompt_version"] == "v3"
     assert "peak-demand" in agent["capabilities"]
@@ -324,3 +328,57 @@ def test_report_writer_detail_shows_its_own_prompt() -> None:
     detail = client_for().get("/agents/report-writer").json()
     assert detail["prompt"]["version"] == "v1" and "Data quality" in detail["prompt"]["text"]
     assert detail["spec"]["config"]["allowed_tools"] == ["list_sites", "get_fact_sheet"]
+
+
+# --------------------------------------------------------------- the third agent
+
+
+def run_investigation(client: TestClient, **body):
+    return client.post("/agents/anomaly-investigator/runs", json=body)
+
+
+def test_the_anomalies_endpoint_lists_the_events_for_a_site() -> None:
+    client = client_for()
+    clinic = client.get("/anomalies", params={"site": "demo-clinic"}).json()
+    assert [(a["id"], a["kind"]) for a in clinic["anomalies"]] == [("A1", "spike"), ("A2", "drop")]
+    assert client.get("/anomalies", params={"site": "demo-hotel"}).json()["anomalies"] == []
+    assert client.get("/anomalies").json()["meter_id"] == "demo-hotel"  # the default site
+    assert client.get("/anomalies", params={"site": "nowhere"}).status_code == 404
+    assert client.get("/anomalies", params={"site": "x" * 65}).status_code == 422
+
+
+def test_the_investigator_runs_with_the_test_adapter_through_mcp_and_directly() -> None:
+    client = client_for()
+    for access in ("mcp", "direct"):
+        record = run_investigation(
+            client, site="demo-clinic", anomaly_id="A2", data_access=access
+        ).json()
+        assert record["status"] == "succeeded" and record["model_provider"] == "test-adapter"
+        assert record["agent"] == "EnergyOps Anomaly Investigator"
+        assert record["output"]["hypotheses"][0]["confidence"] == "low"
+        via = next(s for s in record["steps"] if s["name"] == "fact_sheet")["data"]["via"]
+        assert via == access
+    assert [s["name"] for s in record["steps"] if s["name"] == "tool_call"] == []  # direct
+
+
+def test_an_unknown_event_is_a_recorded_failure_not_a_server_error() -> None:
+    client = client_for()
+    record = run_investigation(client, site="demo-clinic", anomaly_id="A9").json()
+    assert record["status"] == "failed" and record["error_kind"] == "unknown_anomaly"
+    assert "A1, A2" in record["error"] and record["attempts"] == 0
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{}, {"anomaly_id": "x"}, {"anomaly_id": "A1", "question": "why?"}, {"anomaly_id": "A1" * 9}],
+)
+def test_input_that_does_not_fit_the_investigator_is_a_422_and_nothing_runs(body) -> None:
+    client = client_for()
+    assert run_investigation(client, **body).status_code == 422
+    assert client.get("/runs").json() == []
+
+
+def test_runs_of_the_investigator_are_listed_with_something_readable() -> None:
+    client = client_for()
+    run_investigation(client, site="demo-clinic", anomaly_id="A1")
+    assert client.get("/runs").json()[0]["question"] == "Investigate A1 at demo-clinic"

@@ -14,10 +14,11 @@ import json
 import re
 import time
 from datetime import UTC, datetime
+from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from energyops.agents.fact_sources import FactSheetProvider, ToolAccessError
+from energyops.agents.fact_sources import ToolAccessError
 from energyops.agents.runs import RunRecord, RunStatus, TraceRecorder, UsageTotals
 from energyops.agents.spec import AgentSpec, load_prompt, unimplemented_guardrails
 from energyops.calculations import EnergyDataError
@@ -55,9 +56,17 @@ def parse_json_reply[T: BaseModel](text: str, output_type: type[T], shape: str) 
     start, end = body.find("{"), body.rfind("}")
     if start == -1 or end < start:
         raise ReplyShapeError(f"the reply was not a single JSON object like {shape}")
+    candidate = body[start : end + 1]
     try:
-        data = json.loads(body[start : end + 1])
+        data = json.loads(candidate)
     except json.JSONDecodeError as exc:
+        if exc.pos >= len(candidate):
+            # Seen in a real run: a model left off the final closing brace. The parser's own
+            # message ("Expecting ',' delimiter") does not tell a model what to fix.
+            raise ReplyShapeError(
+                "the reply was not valid JSON (it ends before the object is closed, so check "
+                "that every [ and { has its closing ] and })"
+            ) from exc
         raise ReplyShapeError(f"the reply was not valid JSON ({exc.msg})") from exc
     try:
         return output_type.model_validate(data)
@@ -75,10 +84,20 @@ RETRY_INSTRUCTION = (
 )
 
 
-class GroundedAgent[RequestT: AgentRequest, OutputT: BaseModel]:
-    """Subclasses fill in the four hooks below. `run` is the same for every agent."""
+class HasVia(Protocol):
+    """Whatever an agent fetches its facts with says which path it took, for the trace."""
 
-    def __init__(self, spec: AgentSpec, model: ModelClient, facts: FactSheetProvider) -> None:
+    via: str
+
+
+class GroundedAgent[RequestT: AgentRequest, OutputT: BaseModel, ProviderT: HasVia]:
+    """Subclasses fill in the hooks below. `run` is the same for every agent.
+
+    A lookup error that carries an `error_kind` attribute is recorded under that kind, so an
+    agent can report "unknown_anomaly" instead of the default "unknown_site".
+    """
+
+    def __init__(self, spec: AgentSpec, model: ModelClient, facts: ProviderT) -> None:
         missing = unimplemented_guardrails(spec)
         if missing:
             raise ValueError(f"guardrails not implemented yet: {', '.join(missing)}")
@@ -88,6 +107,10 @@ class GroundedAgent[RequestT: AgentRequest, OutputT: BaseModel]:
         self._prompt = load_prompt(spec)
 
     # ------------------------------------------------------------------ hooks
+
+    async def fetch_facts(self, request: RequestT, trace: TraceRecorder) -> FactSheet:
+        """Get the fact sheet this agent will show the model, through its provider."""
+        raise NotImplementedError
 
     def input_text(self, request: RequestT) -> str:
         """Free text from the person, checked against the blocklist. Empty when there is none."""
@@ -164,7 +187,7 @@ class GroundedAgent[RequestT: AgentRequest, OutputT: BaseModel]:
         started = time.perf_counter()
         try:
             async with asyncio.timeout(config.timeout_seconds):
-                sheet = await self._facts(request.site, trace)
+                sheet = await self.fetch_facts(request, trace)
         except TimeoutError:
             trace.step("fact_sheet", started, via=self._facts.via, error="timeout")
             return finish(
@@ -174,7 +197,11 @@ class GroundedAgent[RequestT: AgentRequest, OutputT: BaseModel]:
             )
         except LookupError as exc:
             trace.step("fact_sheet", started, via=self._facts.via, error=str(exc))
-            return finish(RunStatus.FAILED, error_kind="unknown_site", error=str(exc))
+            return finish(
+                RunStatus.FAILED,
+                error_kind=getattr(exc, "error_kind", "unknown_site"),
+                error=str(exc),
+            )
         except EnergyDataError as exc:
             trace.step("fact_sheet", started, via=self._facts.via, error=str(exc))
             return finish(RunStatus.FAILED, error_kind="unusable_data", error=str(exc))

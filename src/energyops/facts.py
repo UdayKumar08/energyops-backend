@@ -37,6 +37,8 @@ class Fact:
         """The figure exactly as it is shown to a model and expected back, one decimal place."""
         if self.unit == "%":
             return f"{self.value:.1f}%"
+        if self.unit == "minutes":
+            return f"{self.value:.0f} minutes"
         if self.unit == "days":
             return f"{self.value:.0f} day" if self.value == 1 else f"{self.value:.0f} days"
         return f"{self.value:.1f} {self.unit}"
