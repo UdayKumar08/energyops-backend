@@ -49,9 +49,11 @@ in the `model_key_secrets` and `embeddings` variables.
 
 ## Known gaps
 
-The web app cannot sign anyone in on Azure yet. It has the local development sign-in only, and
-the Microsoft Entra sign-in flow has not been built. The API validates Entra tokens (tested with
-generated keys only), but nothing in the web app obtains one.
+The web app cannot sign anyone in on Azure yet. Its Microsoft Entra sign-in is written and
+unit-tested but has never been run in a browser or against Microsoft, and this Terraform does not
+yet pass the web app `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET` (from Key Vault)
+and `PUBLIC_URL`. The API validates Entra tokens (tested with generated keys and a local key
+server only).
 
 No alerts, dashboards or budgets are defined. The Key Vault accepts public network access
 (protected by role-based access) so that the deploy job can write to it. The Dockerfiles have not

@@ -13,9 +13,12 @@ backend after three checks: the path must be on an allowlist (sign-in, health, d
 files are not reachable through it), a write must come from the same origin, and the token is added
 on the server.
 
-The only sign-in this app has is the local development one: you type a seeded email address and
-the backend, running in the `local` environment, issues a local token. There is no Microsoft Entra
-sign-in flow in this app yet, so it cannot be used as a production front end until one is added.
+Locally, sign-in is the development one: you type a seeded email address and the backend, running
+in the `local` environment, issues a local token. When `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`,
+`ENTRA_CLIENT_SECRET` and `PUBLIC_URL` are all set, the app instead sends people to Microsoft and
+swaps the returned code for an access token on the server (authorization code flow with PKCE),
+and the development sign-in is switched off. The Entra flow is unit-tested only. It has not been
+run in a browser or against Microsoft, so do not rely on it until it has.
 
 ## Running it
 
