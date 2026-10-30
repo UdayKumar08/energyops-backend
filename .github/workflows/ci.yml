@@ -181,4 +181,10 @@ jobs:
       - name: Init without the remote state
         run: terraform init -backend=false -input=false
       - name: Validate
-        run: terraform validate
+        run: |
+          set +e
+          terraform validate -json > validate.json
+          status=$?
+          # Show each problem as an annotation on the file and line it came from.
+          jq -r '.diagnostics[]? | "::error file=infra/\(.range.filename // "main.tf"),line=\(.range.start.line // 1)::\(.summary) \(.detail | gsub("\n"; " "))"' validate.json
+          exit $status
