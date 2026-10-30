@@ -65,6 +65,7 @@ def create_service_app(
             api_key=chosen.embeddings_api_key,
             model=chosen.embeddings_model,
             send_dimensions=chosen.embeddings_send_dimensions,
+            provider=chosen.embeddings_provider,
         ),
     )
 

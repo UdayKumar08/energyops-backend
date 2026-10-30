@@ -48,8 +48,17 @@ jobs:
       ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_environment: ${{ inputs.environment }}
+      TF_VAR_location: ${{ vars.AZURE_LOCATION || 'westeurope' }}
       TF_VAR_entra_tenant_id: ${{ vars.ENTRA_TENANT_ID }}
       TF_VAR_entra_client_id: ${{ vars.ENTRA_CLIENT_ID }}
+      TF_VAR_vault_admins: ${{ vars.VAULT_ADMIN_OBJECT_IDS || '[]' }}
+      TF_VAR_budget_alert_emails: ${{ vars.BUDGET_ALERT_EMAILS || '[]' }}
+      TF_VAR_first_admin_email: ${{ vars.FIRST_ADMIN_EMAIL }}
+      TF_VAR_first_admin_name: ${{ vars.FIRST_ADMIN_NAME || 'Platform admin' }}
+      TF_VAR_demo_customer_admin_email: ${{ vars.DEMO_CUSTOMER_ADMIN_EMAIL }}
+      TF_VAR_budget_amount: ${{ vars.BUDGET_AMOUNT || '12000' }}
+      TF_VAR_embeddings: ${{ vars.EMBEDDINGS_JSON || 'null' }}
+      TF_VAR_model_key_secrets: ${{ vars.MODEL_KEY_SECRETS_JSON || '{}' }}
       TF_IN_AUTOMATION: "true"
     defaults:
       run:
@@ -83,10 +92,10 @@ jobs:
       - name: Check the Terraform files
         run: terraform validate
 
-      - name: Foundation (registry and identity)
+      - name: Foundation (registry, identity and vault)
         if: inputs.stage == 'foundation'
         run: |
-          targets='-target=azurerm_container_registry.main -target=azurerm_role_assignment.pull_images'
+          targets='-target=azurerm_container_registry.main -target=azurerm_role_assignment.pull_images -target=azurerm_key_vault.main -target=azurerm_role_assignment.deployer_writes_secrets -target=azurerm_role_assignment.vault_admins'
           if [ "${{ inputs.action }}" = "apply" ]; then
             terraform apply -input=false -auto-approve $targets \
               -var="api_image=unused" -var="web_image=unused"

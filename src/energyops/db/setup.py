@@ -31,6 +31,45 @@ def migrate(admin_url: str) -> None:
     command.upgrade(config, "head")
 
 
+def _first_run(url: str) -> None:
+    """Create the first platform admin (and, outside production, the demo customer) when the
+    environment variables name them. Safe to run again."""
+    from energyops.db.first_run import FirstRunError, first_run
+    from energyops.db.session import Database
+
+    admin = os.environ.get("ENERGYOPS_FIRST_ADMIN_EMAIL", "").strip()
+    demo = os.environ.get("ENERGYOPS_DEMO_CUSTOMER_ADMIN_EMAIL", "").strip()
+    if not admin and not demo:
+        return
+    environment = Environment(os.environ.get("ENERGYOPS_ENVIRONMENT", Environment.LOCAL.value))
+
+    async def go() -> None:
+        db = Database(url)
+        try:
+            result = await first_run(
+                db,
+                environment=environment,
+                admin_email=admin or None,
+                admin_name=os.environ.get("ENERGYOPS_FIRST_ADMIN_NAME", "Platform admin"),
+                demo_customer_admin_email=demo or None,
+            )
+        finally:
+            await db.dispose()
+        print(
+            "Platform admin: " + ("created." if result.platform_admin_created else "already there.")
+        )
+        if demo:
+            print(
+                "Demo customer: "
+                + ("created." if result.demo_customer_created else "already there.")
+            )
+
+    try:
+        asyncio.run(go())
+    except FirstRunError as exc:
+        raise SystemExit(str(exc)) from None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m energyops.db.setup", description=__doc__)
     parser.add_argument("--seed", action="store_true", help="load the demo data (local only)")
@@ -44,6 +83,7 @@ def main() -> None:
     migrate(url)
     asyncio.run(setup_checkpointer(url))
     print("The database is up to date.")
+    _first_run(url)
     if args.seed:
         from energyops.db.seed import main as seed_main
 

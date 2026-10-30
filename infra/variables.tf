@@ -13,8 +13,9 @@ variable "environment" {
 }
 
 variable "location" {
-  type    = string
-  default = "uksouth"
+  type        = string
+  default     = "westeurope"
+  description = "An Azure region. Azure has no global option for these resources, so pick one."
 }
 
 variable "name_prefix" {
@@ -76,15 +77,63 @@ variable "model_key_secrets" {
 
 variable "embeddings" {
   type = object({
-    base_url   = string
+    provider   = optional(string, "openai_compatible") # or "gemini" (Google's own embeddings method)
+    base_url   = optional(string)                      # needed for openai_compatible; optional for gemini
     model      = string
     key_secret = string # name of an existing Key Vault secret holding the API key
   })
   default     = null
-  description = "An OpenAI-compatible embeddings endpoint. Required in prod; the API refuses its word-matching stand-in there."
+  description = "The embeddings provider. Required in prod; the API refuses its word-matching stand-in there."
+}
+
+variable "budget_amount" {
+  type        = number
+  default     = 12000
+  description = "Monthly budget for the subscription, in the currency the subscription is billed in. Alerts only: Azure does not stop spending when it is passed."
+}
+
+variable "budget_alert_emails" {
+  type        = list(string)
+  default     = []
+  description = "Who is emailed when spending reaches the alert points. Empty means no budget is created."
 }
 
 variable "tags" {
   type    = map(string)
   default = {}
+}
+
+variable "entra_client_secret_name" {
+  type        = string
+  default     = "entra-client-secret"
+  description = "The name of the vault secret that holds the Microsoft app registration's client secret. A person creates it in the vault first."
+}
+
+variable "public_url" {
+  type        = string
+  default     = null
+  description = "The web app's public address if it is not the default Container Apps address, for example a custom domain. No trailing slash."
+}
+
+variable "vault_admins" {
+  type        = list(string)
+  default     = []
+  description = "Object IDs of the people who may write secrets to the Key Vault by hand. Needed for the model keys and the Microsoft client secret."
+}
+
+variable "first_admin_email" {
+  type        = string
+  default     = ""
+  description = "Email of the first platform admin. The migrate job creates them if they are missing. They sign in through Microsoft; no password is involved."
+}
+
+variable "first_admin_name" {
+  type    = string
+  default = "Platform admin"
+}
+
+variable "demo_customer_admin_email" {
+  type        = string
+  default     = ""
+  description = "When set (never in prod), the migrate job also creates an invented customer organisation with this person as its administrator."
 }

@@ -18,6 +18,11 @@ locals {
   vault_name = substr("${var.name_prefix}-${var.environment}-${random_string.suffix.result}", 0, 24)
   tags       = merge({ app = "energyops", environment = var.environment }, var.tags)
 
+  web_app_name = "ca-${local.base}-web"
+  # A Container App's public address is its name plus the environment's default domain, so the
+  # web app can know its own address without referring to itself. A custom domain overrides it.
+  public_url = coalesce(var.public_url, "https://${local.web_app_name}.${azurerm_container_app_environment.main.default_domain}")
+
   app_db_url   = "postgresql+psycopg://energyops_app:${random_password.app.result}@${azurerm_postgresql_flexible_server.main.fqdn}:5432/energyops?sslmode=require"
   owner_db_url = "postgresql+psycopg://energyops_owner:${random_password.owner.result}@${azurerm_postgresql_flexible_server.main.fqdn}:5432/energyops?sslmode=require"
   admin_db_url = "postgresql://energyops_admin:${random_password.server_admin.result}@${azurerm_postgresql_flexible_server.main.fqdn}:5432/energyops?sslmode=require"
@@ -88,11 +93,10 @@ resource "azurerm_private_dns_zone" "postgres" {
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
-  name                  = "postgres-link"
-  resource_group_name   = azurerm_resource_group.main.name
-  private_dns_zone_name = azurerm_private_dns_zone.postgres.name
-  virtual_network_id    = azurerm_virtual_network.main.id
-  tags                  = local.tags
+  name                = "postgres-link"
+  private_dns_zone_id = azurerm_private_dns_zone.postgres.id
+  virtual_network_id  = azurerm_virtual_network.main.id
+  tags                = local.tags
 }
 
 # ---- Identity, registry, vault -----------------------------------------------------------------
@@ -136,6 +140,15 @@ resource "azurerm_role_assignment" "deployer_writes_secrets" {
   scope                = azurerm_key_vault.main.id
   role_definition_name = "Key Vault Secrets Officer"
   principal_id         = data.azurerm_client_config.current.object_id
+}
+
+# People who put secrets in the vault by hand (model keys, the Microsoft client secret). Their
+# object IDs come from the vault_admins variable. This is data access only, not control of Azure.
+resource "azurerm_role_assignment" "vault_admins" {
+  for_each             = toset(var.vault_admins)
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Secrets Officer"
+  principal_id         = each.value
 }
 
 resource "azurerm_role_assignment" "apps_read_secrets" {
@@ -348,10 +361,17 @@ resource "azurerm_container_app" "api" {
         secret_name = "database-url"
       }
       dynamic "env" {
-        for_each = var.embeddings == null ? [] : [var.embeddings]
+        for_each = var.embeddings == null || var.embeddings.base_url == null ? [] : [var.embeddings]
         content {
           name  = "ENERGYOPS_EMBEDDINGS_BASE_URL"
           value = env.value.base_url
+        }
+      }
+      dynamic "env" {
+        for_each = var.embeddings == null ? [] : [var.embeddings]
+        content {
+          name  = "ENERGYOPS_EMBEDDINGS_PROVIDER"
+          value = env.value.provider
         }
       }
       dynamic "env" {
@@ -389,7 +409,7 @@ resource "azurerm_container_app" "api" {
 }
 
 resource "azurerm_container_app" "web" {
-  name                         = "ca-${local.base}-web"
+  name                         = local.web_app_name
   container_app_environment_id = azurerm_container_app_environment.main.id
   resource_group_name          = azurerm_resource_group.main.name
   revision_mode                = "Single"
@@ -404,6 +424,14 @@ resource "azurerm_container_app" "web" {
   registry {
     server   = azurerm_container_registry.main.login_server
     identity = azurerm_user_assigned_identity.apps.id
+  }
+
+  # The Microsoft client secret is created in the vault by a person, never by Terraform, so it
+  # never passes through the state file.
+  secret {
+    name                = "entra-client-secret"
+    key_vault_secret_id = "${azurerm_key_vault.main.vault_uri}secrets/${var.entra_client_secret_name}"
+    identity            = azurerm_user_assigned_identity.apps.id
   }
 
   ingress {
@@ -433,6 +461,22 @@ resource "azurerm_container_app" "web" {
         name  = "NODE_ENV"
         value = "production"
       }
+      env {
+        name  = "ENTRA_TENANT_ID"
+        value = var.entra_tenant_id
+      }
+      env {
+        name  = "ENTRA_CLIENT_ID"
+        value = var.entra_client_id
+      }
+      env {
+        name        = "ENTRA_CLIENT_SECRET"
+        secret_name = "entra-client-secret"
+      }
+      env {
+        name  = "PUBLIC_URL"
+        value = local.public_url
+      }
 
       liveness_probe {
         transport = "HTTP"
@@ -447,7 +491,10 @@ resource "azurerm_container_app" "web" {
     }
   }
 
-  depends_on = [azurerm_role_assignment.pull_images]
+  depends_on = [
+    azurerm_role_assignment.pull_images,
+    azurerm_role_assignment.apps_read_secrets,
+  ]
 }
 
 # ---- One-off database jobs (run by hand, never on a schedule) ------------------------------------
@@ -571,6 +618,27 @@ resource "azurerm_container_app_job" "migrate" {
         name        = "ENERGYOPS_ADMIN_DATABASE_URL"
         secret_name = "owner-database-url"
       }
+      dynamic "env" {
+        for_each = var.first_admin_email == "" ? [] : [var.first_admin_email]
+        content {
+          name  = "ENERGYOPS_FIRST_ADMIN_EMAIL"
+          value = env.value
+        }
+      }
+      dynamic "env" {
+        for_each = var.first_admin_email == "" ? [] : [var.first_admin_name]
+        content {
+          name  = "ENERGYOPS_FIRST_ADMIN_NAME"
+          value = env.value
+        }
+      }
+      dynamic "env" {
+        for_each = var.demo_customer_admin_email == "" || var.environment == "prod" ? [] : [var.demo_customer_admin_email]
+        content {
+          name  = "ENERGYOPS_DEMO_CUSTOMER_ADMIN_EMAIL"
+          value = env.value
+        }
+      }
     }
   }
 
@@ -578,4 +646,43 @@ resource "azurerm_container_app_job" "migrate" {
     azurerm_role_assignment.pull_images,
     azurerm_role_assignment.apps_read_secrets,
   ]
+}
+
+# An email warning when spending nears the monthly limit. It only warns; it does not stop anything.
+# The first alert is at about 83 percent of the amount (10,000 of 12,000), then at the full amount,
+# then when the month is forecast to pass it.
+resource "azurerm_consumption_budget_subscription" "monthly" {
+  count           = length(var.budget_alert_emails) == 0 ? 0 : 1
+  name            = "energyops-${var.environment}-monthly"
+  subscription_id = "/subscriptions/${var.subscription_id}"
+  amount          = var.budget_amount
+  time_grain      = "Monthly"
+
+  time_period {
+    start_date = "2026-11-01T00:00:00Z"
+  }
+
+  notification {
+    enabled        = true
+    threshold      = 83
+    threshold_type = "Actual"
+    operator       = "GreaterThan"
+    contact_emails = var.budget_alert_emails
+  }
+
+  notification {
+    enabled        = true
+    threshold      = 100
+    threshold_type = "Actual"
+    operator       = "GreaterThan"
+    contact_emails = var.budget_alert_emails
+  }
+
+  notification {
+    enabled        = true
+    threshold      = 100
+    threshold_type = "Forecasted"
+    operator       = "GreaterThan"
+    contact_emails = var.budget_alert_emails
+  }
 }

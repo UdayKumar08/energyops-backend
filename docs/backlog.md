@@ -44,7 +44,7 @@ The next small pieces of work, in order. Each item should fit in one pull reques
 
 Run the agents against real models. The report writer, anomaly investigator (prompt v2), savings advisor and supervisor have only scripted tests. Uday has the Gemini and Nebius keys, so the live evaluation commands (`python -m energyops.agents.live_eval --agent <id>` and `python -m energyops.agents.supervisor_evals gemini`) are the next step, followed by reading the answers.
 
-Add the Microsoft Entra sign-in flow to the web app. The API checks Entra tokens (tested with generated keys only), but the web app can only sign in through the local development route. Without this the deployed web app cannot be used.
+Prove the Microsoft Entra sign-in flow in the web app. It is written (authorization code flow with PKCE) and its pure parts have unit tests, but it has not been run in a browser, against a stand-in Microsoft server or against a real tenant, and the Terraform does not yet pass the web app its client secret and public address. The API checks Entra tokens (tested with generated keys and a local key server only).
 
 Build the images and apply the Terraform in a throwaway subscription, fix what breaks, then validate with `terraform validate` and `terraform plan` in CI. Add alerts and a budget.
 

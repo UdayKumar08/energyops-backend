@@ -14,6 +14,7 @@ from energyops.knowledge import (
     DIMENSIONS,
     DocumentRefused,
     EmbeddingError,
+    GeminiEmbedder,
     HashingEmbedder,
     OpenAICompatibleEmbedder,
     chunk_text,
@@ -369,3 +370,67 @@ async def test_the_assistant_uses_both_capabilities_for_the_caller(
         headers=as_user(NORTH_MANAGER),
     )
     assert other.json()["run"]["output"]["result"]["results"] == []
+
+
+def gemini(handler: httpx.MockTransport) -> GeminiEmbedder:
+    return GeminiEmbedder(
+        api_key=SecretStr("secret-key"), model="gemini-embedding-2", transport=handler
+    )
+
+
+async def test_the_gemini_request_follows_the_documented_shape() -> None:
+    seen: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        count = len(json.loads(request.content)["requests"])
+        return httpx.Response(
+            200, json={"embeddings": [{"values": [3.0] + [4.0] * (DIMENSIONS - 1)}] * count}
+        )
+
+    vectors = await gemini(httpx.MockTransport(handle)).embed([f"t{i}" for i in range(70)])
+    assert len(seen) == 2 and len(vectors) == 70
+    assert str(seen[0].url) == (
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:batchEmbedContents"
+    )
+    assert seen[0].headers["x-goog-api-key"] == "secret-key"
+    first = json.loads(seen[0].content)["requests"][0]
+    assert first["model"] == "models/gemini-embedding-2"
+    assert first["outputDimensionality"] == DIMENSIONS
+    assert first["content"] == {"parts": [{"text": "t0"}]}
+    assert abs(sum(x * x for x in vectors[0]) - 1.0) < 1e-9  # scaled to unit length
+
+
+@pytest.mark.parametrize(
+    "response, message",
+    [
+        (httpx.Response(403, text="bad key secret-key"), "status 403"),
+        (httpx.Response(200, json={"oops": 1}), "expected shape"),
+        (httpx.Response(200, json={"embeddings": []}), "received 0"),
+        (httpx.Response(200, json={"embeddings": [{"values": [0.1] * 3072}]}), "3072"),
+        (httpx.Response(200, json={"embeddings": [{"values": [0.0] * DIMENSIONS}]}), "all-zero"),
+    ],
+)
+async def test_a_bad_gemini_answer_is_an_error_that_leaks_nothing(
+    response: httpx.Response, message: str
+) -> None:
+    with pytest.raises(EmbeddingError, match=message) as caught:
+        await gemini(httpx.MockTransport(lambda request: response)).embed(["x"])
+    assert "secret-key" not in str(caught.value)
+
+
+def test_the_gemini_provider_is_chosen_by_name_and_needs_no_base_url() -> None:
+    chosen = make_embedder(
+        environment=Environment.PROD,
+        base_url=None,
+        api_key=SecretStr("k"),
+        model="gemini-embedding-2",
+        provider="gemini",
+    )
+    assert isinstance(chosen, GeminiEmbedder) and chosen.semantic
+    assert (
+        make_embedder(
+            environment=Environment.PROD, base_url=None, api_key=None, model="m", provider="gemini"
+        )
+        is None
+    )

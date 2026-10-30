@@ -1,14 +1,19 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { entraSettings } from "@/lib/entra";
 import { isSameOrigin } from "@/lib/proxy-path";
 import { backendUrl, cookieOptions, SESSION_COOKIE } from "@/lib/session";
 
-// Sign-in and sign-out. Today sign-in is the backend's local development sign-in (an email, no
-// password), which the backend itself only offers in its local environment. Production sign-in
-// with Microsoft Entra ID is not built yet (see docs/status.md).
+// Development sign-in and sign-out. Sign-in here is the backend's local development sign-in (an
+// email, no password), which the backend itself only offers in its local environment. When
+// Microsoft Entra is configured it is switched off here too; Entra sign-in lives under
+// /api/auth/entra.
 
 export async function POST(request: NextRequest) {
   if (!isSameOrigin(request.headers)) {
     return NextResponse.json({ detail: "That request did not come from this site." }, { status: 403 });
+  }
+  if (entraSettings().kind !== "off") {
+    return NextResponse.json({ detail: "Sign in with Microsoft instead." }, { status: 403 });
   }
   let email = "";
   try {

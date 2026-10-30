@@ -8,7 +8,7 @@ start-up instead of being discovered later.
 import re
 from enum import StrEnum
 from functools import lru_cache
-from typing import Self
+from typing import Literal, Self
 from urllib.parse import urlparse
 
 from pydantic import SecretStr, model_validator
@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     entra_client_id: str | None = None
     # An OpenAI-compatible embeddings endpoint for knowledge search. The key is read from the
     # environment only. Without all three, non-production environments use a lexical stand-in.
+    # "gemini" uses Google's own method (the base URL is then optional); "openai_compatible"
+    # needs the base URL.
+    embeddings_provider: Literal["openai_compatible", "gemini"] = "openai_compatible"
     embeddings_base_url: str | None = None
     embeddings_api_key: SecretStr | None = None
     embeddings_model: str | None = None
