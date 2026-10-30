@@ -61,12 +61,21 @@ if [ -z "$(az ad sp list --filter "appId eq '$APP_ID'" --query '[0].id' -o tsv)"
 fi
 SP_OBJ="$(az ad sp show --id "$APP_ID" --query id -o tsv)"
 
-CRED="github-$ENVIRONMENT"
-if [ -z "$(az ad app federated-credential list --id "$APP_ID" --query "[?name=='$CRED'].name" -o tsv)" ]; then
-  az ad app federated-credential create --id "$APP_ID" --parameters "{
-    \"name\":\"$CRED\",\"issuer\":\"https://token.actions.githubusercontent.com\",
-    \"subject\":\"repo:$REPO:environment:$ENVIRONMENT\",
-    \"audiences\":[\"api://AzureADTokenExchange\"]}" -o none
+# GitHub now puts numeric IDs in the token subject (repo:owner@ownerId/name@repoId:environment:x),
+# so the sign-in only matches a credential that has them. Set REPO_SUBJECT to that form, and the
+# plain-name form is created as well.
+make_cred() {
+  local name="$1" subject="$2"
+  if [ -z "$(az ad app federated-credential list --id "$APP_ID" --query "[?name=='$name'].name" -o tsv)" ]; then
+    az ad app federated-credential create --id "$APP_ID" --parameters "{
+      \"name\":\"$name\",\"issuer\":\"https://token.actions.githubusercontent.com\",
+      \"subject\":\"$subject\",
+      \"audiences\":[\"api://AzureADTokenExchange\"]}" -o none
+  fi
+}
+make_cred "github-$ENVIRONMENT" "repo:$REPO:environment:$ENVIRONMENT"
+if [ -n "${REPO_SUBJECT:-}" ]; then
+  make_cred "github-$ENVIRONMENT-ids" "repo:$REPO_SUBJECT:environment:$ENVIRONMENT"
 fi
 
 echo "Roles"
