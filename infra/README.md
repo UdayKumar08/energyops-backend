@@ -36,7 +36,8 @@ in the `model_key_secrets` and `embeddings` variables.
 
 ## Order of operations
 
-1. Once, by hand: create the state storage container, and an app registration with a federated
+1. Once: run `infra/scripts/azure-setup.sh` in Azure Cloud Shell (it does the rest of this step and
+   prints the variable values). It creates the state storage container, and an app registration with a federated
    credential for this repository's GitHub environment (OIDC). Give it Contributor and User
    Access Administrator at subscription scope, because Terraform creates the resource group and
    the role assignments inside it. Add the IDs as variables on the GitHub environment:
