@@ -13,8 +13,9 @@ variable "environment" {
 }
 
 variable "location" {
-  type    = string
-  default = "uksouth"
+  type        = string
+  default     = "westeurope"
+  description = "An Azure region. Azure has no global option for these resources, so pick one."
 }
 
 variable "name_prefix" {
@@ -87,4 +88,16 @@ variable "embeddings" {
 variable "tags" {
   type    = map(string)
   default = {}
+}
+
+variable "entra_client_secret_name" {
+  type        = string
+  default     = "entra-client-secret"
+  description = "The name of the vault secret that holds the Microsoft app registration's client secret. A person creates it in the vault first."
+}
+
+variable "public_url" {
+  type        = string
+  default     = null
+  description = "The web app's public address if it is not the default Container Apps address, for example a custom domain. No trailing slash."
 }

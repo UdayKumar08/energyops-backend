@@ -25,6 +25,11 @@ apps read them from the vault through a managed identity, so no password is an e
 variable in a definition. The passwords are also in Terraform's state, which is why the state
 must live in a private storage container and not in the repository.
 
+The Microsoft client secret is the same: create it in the vault first, under the name in the
+`entra_client_secret_name` variable (default `entra-client-secret`), before the `full` apply, because the
+web app reads it from there. After the apply, add the `entra_redirect_uri` output as a Web redirect
+URI on the app registration.
+
 Model provider keys and the embeddings key are not created by Terraform and never pass through
 its state. A person creates each one in the vault first (`az keyvault secret set`), then names it
 in the `model_key_secrets` and `embeddings` variables.
@@ -49,11 +54,10 @@ in the `model_key_secrets` and `embeddings` variables.
 
 ## Known gaps
 
-The web app cannot sign anyone in on Azure yet. Its Microsoft Entra sign-in is written and
-unit-tested but has never been run in a browser or against Microsoft, and this Terraform does not
-yet pass the web app `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET` (from Key Vault)
-and `PUBLIC_URL`. The API validates Entra tokens (tested with generated keys and a local key
-server only).
+The Microsoft Entra sign-in is written and unit-tested but has never been run against Microsoft.
+The Terraform now passes the web app `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET`
+(from Key Vault) and `PUBLIC_URL`, but that has never been planned or applied. The API validates
+Entra tokens (tested with generated keys and a local key server only).
 
 No alerts, dashboards or budgets are defined. The Key Vault accepts public network access
 (protected by role-based access) so that the deploy job can write to it. The Dockerfiles have not
