@@ -48,6 +48,7 @@ jobs:
       ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_environment: ${{ inputs.environment }}
+      TF_VAR_location: ${{ vars.AZURE_LOCATION || 'westeurope' }}
       TF_VAR_entra_tenant_id: ${{ vars.ENTRA_TENANT_ID }}
       TF_VAR_entra_client_id: ${{ vars.ENTRA_CLIENT_ID }}
       TF_VAR_vault_admins: ${{ vars.VAULT_ADMIN_OBJECT_IDS || '[]' }}

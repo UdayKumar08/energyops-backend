@@ -14,6 +14,7 @@ SUB="${SUB:?set SUB to the subscription id}"
 REPO="${REPO:?set REPO to owner/repo}"
 ENVIRONMENT="${ENVIRONMENT:-dev}"
 LOC="${LOC:-westeurope}"
+LOC_FALLBACKS="${LOC_FALLBACKS:-northeurope swedencentral germanywestcentral francecentral uksouth}"
 STATE_RG="rg-energyops-tfstate"
 # Deterministic so a second run finds the same account. Lowercase letters and digits, 24 max.
 SA="stenergyopstf$(echo "$SUB" | tr -d '-' | cut -c1-8)"
@@ -30,10 +31,21 @@ for p in Microsoft.App Microsoft.ContainerRegistry Microsoft.DBforPostgreSQL Mic
 done
 
 echo "Terraform state storage"
-az group create -n "$STATE_RG" -l "$LOC" -o none
-if ! az storage account show -n "$SA" -g "$STATE_RG" -o none 2>/dev/null; then
-  az storage account create -n "$SA" -g "$STATE_RG" -l "$LOC" --sku Standard_LRS \
-    --allow-blob-public-access false --min-tls-version TLS1_2 -o none
+az group show -n "$STATE_RG" -o none 2>/dev/null || az group create -n "$STATE_RG" -l "$LOC" -o none
+# Some subscriptions (free trials especially) are refused in busy regions. Try each in turn and
+# use the first that accepts the storage account. The same region is then used for everything.
+if az storage account show -n "$SA" -g "$STATE_RG" -o none 2>/dev/null; then
+  LOC="$(az storage account show -n "$SA" -g "$STATE_RG" --query location -o tsv)"
+else
+  CREATED=""
+  for L in $LOC $LOC_FALLBACKS; do
+    echo "  trying $L"
+    if az storage account create -n "$SA" -g "$STATE_RG" -l "$L" --sku Standard_LRS \
+        --allow-blob-public-access false --min-tls-version TLS1_2 -o none; then
+      LOC="$L"; CREATED=1; break
+    fi
+  done
+  [ -n "$CREATED" ] || { echo "No region accepted the storage account"; exit 1; }
 fi
 az storage account blob-service-properties update --account-name "$SA" -g "$STATE_RG" \
   --enable-versioning true -o none
@@ -74,4 +86,5 @@ echo "AZURE_SUBSCRIPTION_ID=$SUB"
 echo "TFSTATE_RESOURCE_GROUP=$STATE_RG"
 echo "TFSTATE_STORAGE_ACCOUNT=$SA"
 echo "TFSTATE_CONTAINER=tfstate"
+echo "AZURE_LOCATION=$LOC"
 echo "VAULT_ADMIN_OBJECT_IDS=[\"$(az ad signed-in-user show --query id -o tsv)\"]"
