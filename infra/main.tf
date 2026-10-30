@@ -142,6 +142,15 @@ resource "azurerm_role_assignment" "deployer_writes_secrets" {
   principal_id         = data.azurerm_client_config.current.object_id
 }
 
+# People who put secrets in the vault by hand (model keys, the Microsoft client secret). Their
+# object IDs come from the vault_admins variable. This is data access only, not control of Azure.
+resource "azurerm_role_assignment" "vault_admins" {
+  for_each             = toset(var.vault_admins)
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Secrets Officer"
+  principal_id         = each.value
+}
+
 resource "azurerm_role_assignment" "apps_read_secrets" {
   scope                = azurerm_key_vault.main.id
   role_definition_name = "Key Vault Secrets User"

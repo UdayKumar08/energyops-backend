@@ -101,3 +101,9 @@ variable "public_url" {
   default     = null
   description = "The web app's public address if it is not the default Container Apps address, for example a custom domain. No trailing slash."
 }
+
+variable "vault_admins" {
+  type        = list(string)
+  default     = []
+  description = "Object IDs of the people who may write secrets to the Key Vault by hand. Needed for the model keys and the Microsoft client secret."
+}

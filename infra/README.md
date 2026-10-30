@@ -38,12 +38,17 @@ in the `model_key_secrets` and `embeddings` variables.
 
 1. Once, by hand: create the state storage container, and an app registration with a federated
    credential for this repository's GitHub environment (OIDC). Give it Contributor and User
-   Access Administrator on the resource group (it creates role assignments). Add the IDs as
-   variables on the GitHub environment: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
-   `AZURE_SUBSCRIPTION_ID`, `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `TFSTATE_RESOURCE_GROUP`,
-   `TFSTATE_STORAGE_ACCOUNT`, `TFSTATE_CONTAINER`. Add required reviewers to the environment.
+   Access Administrator at subscription scope, because Terraform creates the resource group and
+   the role assignments inside it. Add the IDs as variables on the GitHub environment:
+   `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `ENTRA_TENANT_ID`,
+   `ENTRA_CLIENT_ID`, `TFSTATE_RESOURCE_GROUP`, `TFSTATE_STORAGE_ACCOUNT`, `TFSTATE_CONTAINER`
+   and `VAULT_ADMIN_OBJECT_IDS` (a JSON list such as `["<your object id>"]`, the people who may
+   write secrets by hand). Add required reviewers to the environment.
 2. Run the Deploy workflow with stage `foundation`, action `plan`, read it, then `apply`. This
-   creates the registry and identity so there is somewhere to put images.
+   creates the resource group, the registry, the identity and the Key Vault, so there is
+   somewhere to put images and secrets.
+2b. Put the secrets in the vault yourself: the Microsoft client secret under `entra-client-secret`,
+   the model provider keys, and the embeddings key if you use one. Nothing here creates them.
 3. Run it with stage `full` and action `plan`, read it, then `apply`. This builds both images in
    the registry and creates everything else.
 4. Start the `bootstrap` job once (`az containerapp job start`). It creates the owner and
