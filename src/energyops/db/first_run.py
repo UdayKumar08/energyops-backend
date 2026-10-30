@@ -7,6 +7,9 @@ only gets in if their email is in the users table.
 
     ENERGYOPS_FIRST_ADMIN_EMAIL           the platform admin's email (required to do anything)
     ENERGYOPS_FIRST_ADMIN_NAME            their display name (default: Platform admin)
+    ENERGYOPS_FIRST_ADMIN_OBJECT_ID       their Microsoft Entra object id (optional). Sign-in then
+                                          matches on it, which works whatever address Microsoft
+                                          puts in the token.
     ENERGYOPS_DEMO_CUSTOMER_ADMIN_EMAIL   when set, create the demo customer with this admin
                                           (refused in production)
 """
@@ -50,21 +53,33 @@ def _clean_email(value: str, what: str) -> str:
     return email
 
 
+def _clean_object_id(value: str | None) -> str | None:
+    if not value or not value.strip():
+        return None
+    try:
+        return str(uuid.UUID(value.strip()))
+    except ValueError:
+        raise FirstRunError("The platform admin object id is not a UUID.") from None
+
+
 async def first_run(
     db: Database,
     *,
     environment: Environment,
     admin_email: str | None,
     admin_name: str = "Platform admin",
+    admin_object_id: str | None = None,
     demo_customer_admin_email: str | None = None,
 ) -> FirstRunResult:
     platform_created = False
     demo_created = False
     if admin_email:
         email = _clean_email(admin_email, "The platform admin email")
+        object_id = _clean_object_id(admin_object_id)
         async with db.session(Scope.platform_wide()) as session:
-            if await repo.find_user(session, email=email) is None:
-                await repo.create_user(
+            user = await repo.find_user(session, email=email)
+            if user is None:
+                user = await repo.create_user(
                     session,
                     org_id=None,
                     email=email,
@@ -72,6 +87,9 @@ async def first_run(
                     role="platform_admin",
                 )
                 platform_created = True
+            # Record the Microsoft id so sign-in finds this person by it. Never overwrite one.
+            if object_id and user.external_id is None:
+                user.external_id = object_id
     if demo_customer_admin_email:
         if environment is Environment.PROD:
             raise FirstRunError("The demo customer is never created in production.")

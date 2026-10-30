@@ -188,3 +188,22 @@ jobs:
           # Show each problem as an annotation on the file and line it came from.
           jq -r '.diagnostics[]? | "::error file=infra/\(.range.filename // "main.tf"),line=\(.range.start.line // 1)::\(.summary) \(.detail | gsub("\n"; " "))"' validate.json
           exit $status
+
+  images:
+    name: Build both container images
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the API image
+        run: docker build --tag energyops-api:ci .
+      - name: Build the web image
+        run: docker build --tag energyops-web:ci --file web/Dockerfile web
+      - name: The API image starts and refuses to run without its settings
+        run: |
+          set +e
+          out=$(docker run --rm energyops-api:ci serve 2>&1)
+          status=$?
+          echo "$out" | tail -5
+          # It must fail for a missing setting, not for a missing file or command.
+          [ $status -ne 0 ] && ! echo "$out" | grep -qi "no such file\|not found\|exec format"

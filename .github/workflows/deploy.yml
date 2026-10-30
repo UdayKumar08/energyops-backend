@@ -54,6 +54,7 @@ jobs:
       TF_VAR_vault_admins: ${{ vars.VAULT_ADMIN_OBJECT_IDS || '[]' }}
       TF_VAR_budget_alert_emails: ${{ vars.BUDGET_ALERT_EMAILS || '[]' }}
       TF_VAR_first_admin_email: ${{ vars.FIRST_ADMIN_EMAIL }}
+      TF_VAR_first_admin_object_id: ${{ vars.FIRST_ADMIN_OBJECT_ID || fromJSON(vars.VAULT_ADMIN_OBJECT_IDS || '[""]')[0] }}
       TF_VAR_first_admin_name: ${{ vars.FIRST_ADMIN_NAME || 'Platform admin' }}
       TF_VAR_demo_customer_admin_email: ${{ vars.DEMO_CUSTOMER_ADMIN_EMAIL }}
       TF_VAR_budget_amount: ${{ vars.BUDGET_AMOUNT || '12000' }}
@@ -113,14 +114,19 @@ jobs:
           echo "api=$server/energyops-api:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
           echo "web=$server/energyops-web:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
-      - name: Build the images in the registry
+      # ACR Tasks (`az acr build`) is switched off on some subscriptions, trial ones included, so the
+      # images are built on this runner and pushed. Signing in to the registry uses the same Azure
+      # sign-in as the rest of the job; the deploy identity holds Contributor, which can push here.
+      - name: Build the images and push them to the registry
         if: inputs.stage == 'full' && inputs.action == 'apply'
         working-directory: .
         run: |
           registry="${{ steps.images.outputs.server }}"
-          registry="${registry%%.*}"
-          az acr build --registry "$registry" --image "energyops-api:${GITHUB_SHA}" .
-          az acr build --registry "$registry" --image "energyops-web:${GITHUB_SHA}" --file web/Dockerfile web
+          az acr login --name "${registry%%.*}"
+          docker build --tag "${{ steps.images.outputs.api }}" .
+          docker push "${{ steps.images.outputs.api }}"
+          docker build --tag "${{ steps.images.outputs.web }}" --file web/Dockerfile web
+          docker push "${{ steps.images.outputs.web }}"
 
       - name: Plan or apply everything
         if: inputs.stage == 'full'

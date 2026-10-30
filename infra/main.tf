@@ -633,6 +633,13 @@ resource "azurerm_container_app_job" "migrate" {
         }
       }
       dynamic "env" {
+        for_each = var.first_admin_email == "" || var.first_admin_object_id == "" ? [] : [var.first_admin_object_id]
+        content {
+          name  = "ENERGYOPS_FIRST_ADMIN_OBJECT_ID"
+          value = env.value
+        }
+      }
+      dynamic "env" {
         for_each = var.demo_customer_admin_email == "" || var.environment == "prod" ? [] : [var.demo_customer_admin_email]
         content {
           name  = "ENERGYOPS_DEMO_CUSTOMER_ADMIN_EMAIL"
