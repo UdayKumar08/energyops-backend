@@ -52,6 +52,13 @@ jobs:
       TF_VAR_entra_tenant_id: ${{ vars.ENTRA_TENANT_ID }}
       TF_VAR_entra_client_id: ${{ vars.ENTRA_CLIENT_ID }}
       TF_VAR_vault_admins: ${{ vars.VAULT_ADMIN_OBJECT_IDS || '[]' }}
+      TF_VAR_budget_alert_emails: ${{ vars.BUDGET_ALERT_EMAILS || '[]' }}
+      TF_VAR_first_admin_email: ${{ vars.FIRST_ADMIN_EMAIL }}
+      TF_VAR_first_admin_name: ${{ vars.FIRST_ADMIN_NAME || 'Platform admin' }}
+      TF_VAR_demo_customer_admin_email: ${{ vars.DEMO_CUSTOMER_ADMIN_EMAIL }}
+      TF_VAR_budget_amount: ${{ vars.BUDGET_AMOUNT || '12000' }}
+      TF_VAR_embeddings: ${{ vars.EMBEDDINGS_JSON || 'null' }}
+      TF_VAR_model_key_secrets: ${{ vars.MODEL_KEY_SECRETS_JSON || '{}' }}
       TF_IN_AUTOMATION: "true"
     defaults:
       run:

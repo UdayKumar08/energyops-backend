@@ -4,11 +4,11 @@ Search here is extractive: it finds the passages of an organisation's own docume
 closest to a question and shows them as written, with the document they came from. Nothing is
 summarised or paraphrased by a model, so nothing can be invented on the way.
 
-Two embedders are provided. `OpenAICompatibleEmbedder` calls a provider's embeddings endpoint
-and is the one to use for real meaning-based search. `HashingEmbedder` needs no provider and no
-key: it hashes words and word pairs into a fixed-size vector, so it matches shared wording and
-nothing more ("boiler" will not match "heating plant"). It is labelled lexical everywhere it
-appears and is refused in the production environment.
+Three embedders are provided. `GeminiEmbedder` calls Google's own embeddings method and
+`OpenAICompatibleEmbedder` calls any OpenAI-style endpoint; both give real meaning-based search.
+`HashingEmbedder` needs no provider and no key: it hashes words and word pairs into a fixed-size
+vector, so it matches shared wording and nothing more ("boiler" will not match "heating plant").
+It is labelled lexical everywhere it appears and is refused in the production environment.
 """
 
 from __future__ import annotations
@@ -245,6 +245,89 @@ class OpenAICompatibleEmbedder:
         return vectors
 
 
+class GeminiEmbedder:
+    """Calls Google's own embeddings method, `models/{model}:batchEmbedContents`, because the
+    OpenAI-style endpoint does not document a way to ask for 768 numbers. The request is one entry
+    per text with `outputDimensionality` set; the answer's `embeddings[].values` come back in
+    request order. Google returns shortened vectors unnormalised, so each is scaled to unit length
+    here (harmless for cosine search). The returned size is checked against the column size."""
+
+    semantic = True
+    dimensions = DIMENSIONS
+    DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+
+    def __init__(
+        self,
+        *,
+        api_key: SecretStr,
+        model: str,
+        base_url: str | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
+        timeout: float = 30.0,
+    ) -> None:
+        self.name = f"gemini:{model}"
+        root = (base_url or self.DEFAULT_BASE_URL).rstrip("/")
+        self._model = model.removeprefix("models/")
+        self._url = f"{root}/models/{self._model}:batchEmbedContents"
+        self._key = api_key
+        self._client = httpx.AsyncClient(transport=transport, timeout=timeout)
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+    async def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        out: list[list[float]] = []
+        for start in range(0, len(texts), EMBED_BATCH):
+            out.extend(await self._batch(list(texts[start : start + EMBED_BATCH])))
+        return out
+
+    async def _batch(self, texts: list[str]) -> list[list[float]]:
+        body = {
+            "requests": [
+                {
+                    "model": f"models/{self._model}",
+                    "content": {"parts": [{"text": text}]},
+                    "outputDimensionality": DIMENSIONS,
+                }
+                for text in texts
+            ]
+        }
+        try:
+            response = await self._client.post(
+                self._url, json=body, headers={"x-goog-api-key": self._key.get_secret_value()}
+            )
+        except httpx.HTTPError as exc:
+            raise EmbeddingError(
+                f"The embedding provider could not be reached ({type(exc).__name__})."
+            ) from None
+        if response.status_code != 200:
+            raise EmbeddingError(
+                f"The embedding provider answered with status {response.status_code}."
+            )
+        try:
+            vectors = [[float(x) for x in row["values"]] for row in response.json()["embeddings"]]
+        except (KeyError, TypeError, ValueError):
+            raise EmbeddingError(
+                "The embedding provider's answer was not in the expected shape."
+            ) from None
+        if len(vectors) != len(texts):
+            raise EmbeddingError(f"Asked for {len(texts)} embeddings and received {len(vectors)}.")
+        result: list[list[float]] = []
+        for vector in vectors:
+            if len(vector) != DIMENSIONS:
+                raise EmbeddingError(
+                    f"The provider returned {len(vector)} numbers per embedding but the store "
+                    f"holds {DIMENSIONS}."
+                )
+            if not all(math.isfinite(x) for x in vector):
+                raise EmbeddingError("The provider returned a number that is not finite.")
+            norm = math.sqrt(sum(x * x for x in vector))
+            if norm == 0:
+                raise EmbeddingError("The provider returned an all-zero embedding.")
+            result.append([x / norm for x in vector])
+        return result
+
+
 def make_embedder(
     *,
     environment: Environment,
@@ -252,10 +335,13 @@ def make_embedder(
     api_key: SecretStr | None,
     model: str | None,
     send_dimensions: bool = True,
+    provider: str = "openai_compatible",
 ) -> Embedder | None:
     """The embedder this deployment uses, or None when there is none to use (production without
     a configured provider). The lexical embedder is only ever a stand-in outside production."""
-    if base_url and api_key and model:
+    if provider == "gemini" and api_key and model:
+        return GeminiEmbedder(api_key=api_key, model=model, base_url=base_url)
+    if provider == "openai_compatible" and base_url and api_key and model:
         return OpenAICompatibleEmbedder(
             base_url=base_url, api_key=api_key, model=model, send_dimensions=send_dimensions
         )

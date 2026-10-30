@@ -361,10 +361,17 @@ resource "azurerm_container_app" "api" {
         secret_name = "database-url"
       }
       dynamic "env" {
-        for_each = var.embeddings == null ? [] : [var.embeddings]
+        for_each = var.embeddings == null || var.embeddings.base_url == null ? [] : [var.embeddings]
         content {
           name  = "ENERGYOPS_EMBEDDINGS_BASE_URL"
           value = env.value.base_url
+        }
+      }
+      dynamic "env" {
+        for_each = var.embeddings == null ? [] : [var.embeddings]
+        content {
+          name  = "ENERGYOPS_EMBEDDINGS_PROVIDER"
+          value = env.value.provider
         }
       }
       dynamic "env" {
@@ -611,6 +618,27 @@ resource "azurerm_container_app_job" "migrate" {
         name        = "ENERGYOPS_ADMIN_DATABASE_URL"
         secret_name = "owner-database-url"
       }
+      dynamic "env" {
+        for_each = var.first_admin_email == "" ? [] : [var.first_admin_email]
+        content {
+          name  = "ENERGYOPS_FIRST_ADMIN_EMAIL"
+          value = env.value
+        }
+      }
+      dynamic "env" {
+        for_each = var.first_admin_email == "" ? [] : [var.first_admin_name]
+        content {
+          name  = "ENERGYOPS_FIRST_ADMIN_NAME"
+          value = env.value
+        }
+      }
+      dynamic "env" {
+        for_each = var.demo_customer_admin_email == "" || var.environment == "prod" ? [] : [var.demo_customer_admin_email]
+        content {
+          name  = "ENERGYOPS_DEMO_CUSTOMER_ADMIN_EMAIL"
+          value = env.value
+        }
+      }
     }
   }
 
@@ -618,4 +646,43 @@ resource "azurerm_container_app_job" "migrate" {
     azurerm_role_assignment.pull_images,
     azurerm_role_assignment.apps_read_secrets,
   ]
+}
+
+# An email warning when spending nears the monthly limit. It only warns; it does not stop anything.
+# The first alert is at about 83 percent of the amount (10,000 of 12,000), then at the full amount,
+# then when the month is forecast to pass it.
+resource "azurerm_consumption_budget_subscription" "monthly" {
+  count           = length(var.budget_alert_emails) == 0 ? 0 : 1
+  name            = "energyops-${var.environment}-monthly"
+  subscription_id = "/subscriptions/${var.subscription_id}"
+  amount          = var.budget_amount
+  time_grain      = "Monthly"
+
+  time_period {
+    start_date = "2026-11-01T00:00:00Z"
+  }
+
+  notification {
+    enabled        = true
+    threshold      = 83
+    threshold_type = "Actual"
+    operator       = "GreaterThan"
+    contact_emails = var.budget_alert_emails
+  }
+
+  notification {
+    enabled        = true
+    threshold      = 100
+    threshold_type = "Actual"
+    operator       = "GreaterThan"
+    contact_emails = var.budget_alert_emails
+  }
+
+  notification {
+    enabled        = true
+    threshold      = 100
+    threshold_type = "Forecasted"
+    operator       = "GreaterThan"
+    contact_emails = var.budget_alert_emails
+  }
 }

@@ -58,6 +58,17 @@ in the `model_key_secrets` and `embeddings` variables.
 5. Start the `migrate` job. Repeat this step after every release that adds a migration. The API
    is only ever given the application role.
 
+## Deploy variables
+
+Besides the IDs in step 1, these GitHub environment variables are read by the Deploy workflow
+(all are names or settings, never secrets): `FIRST_ADMIN_EMAIL` and `FIRST_ADMIN_NAME` (the first
+platform admin, created by the migrate job), `DEMO_CUSTOMER_ADMIN_EMAIL` (not in `prod`),
+`BUDGET_ALERT_EMAILS` (a JSON list) and `BUDGET_AMOUNT`, `AZURE_LOCATION`, `VAULT_ADMIN_OBJECT_IDS`,
+`MODEL_KEY_SECRETS_JSON` such as `{"GEMINI_API_KEY":"gemini-api-key","NEBIUS_API_KEY":"nebius-api-key"}`
+and `EMBEDDINGS_JSON` such as `{"provider":"gemini","model":"gemini-embedding-2","key_secret":"gemini-api-key"}`.
+GitHub issues its sign-in token with ID-based repository names, so the deploy identity needs a
+federated credential whose subject is `repo:OWNER@OWNER_ID/NAME@REPO_ID:environment:dev`.
+
 ## Known gaps
 
 The Microsoft Entra sign-in is written and unit-tested but has never been run against Microsoft.
@@ -65,7 +76,7 @@ The Terraform now passes the web app `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTR
 (from Key Vault) and `PUBLIC_URL`, but that has never been planned or applied. The API validates
 Entra tokens (tested with generated keys and a local key server only).
 
-No alerts, dashboards or budgets are defined. The Key Vault accepts public network access
+A monthly budget with email alerts is defined (when `budget_alert_emails` is set); no other alerts or dashboards are. The Key Vault accepts public network access
 (protected by role-based access) so that the deploy job can write to it. The Dockerfiles have not
 been built, no image digests are pinned, and GitHub actions are pinned by tag, not by commit.
 Embeddings are required in `prod` and the stand-in is refused there, so `prod` also needs the
