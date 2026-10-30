@@ -113,14 +113,19 @@ jobs:
           echo "api=$server/energyops-api:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
           echo "web=$server/energyops-web:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
-      - name: Build the images in the registry
+      # ACR Tasks (`az acr build`) is switched off on some subscriptions, trial ones included, so the
+      # images are built on this runner and pushed. Signing in to the registry uses the same Azure
+      # sign-in as the rest of the job; the deploy identity holds Contributor, which can push here.
+      - name: Build the images and push them to the registry
         if: inputs.stage == 'full' && inputs.action == 'apply'
         working-directory: .
         run: |
           registry="${{ steps.images.outputs.server }}"
-          registry="${registry%%.*}"
-          az acr build --registry "$registry" --image "energyops-api:${GITHUB_SHA}" .
-          az acr build --registry "$registry" --image "energyops-web:${GITHUB_SHA}" --file web/Dockerfile web
+          az acr login --name "${registry%%.*}"
+          docker build --tag "${{ steps.images.outputs.api }}" .
+          docker push "${{ steps.images.outputs.api }}"
+          docker build --tag "${{ steps.images.outputs.web }}" --file web/Dockerfile web
+          docker push "${{ steps.images.outputs.web }}"
 
       - name: Plan or apply everything
         if: inputs.stage == 'full'
