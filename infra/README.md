@@ -1,9 +1,9 @@
 # Azure infrastructure
 
 Terraform for one EnergyOps environment (`dev`, `nonprod` or `prod`). **It has never been
-applied and has never been validated.** No Terraform program was available where it was written,
-so the only check it has had is that the files parse as HCL. Expect `terraform validate` or the
-first `plan` to find mistakes. It was written against the azurerm 5.11 documentation.
+planned or applied.** CI runs `terraform fmt` and `terraform validate` on it, which check its shape
+against the azurerm 5.11 schema but not whether Azure will accept the values, so expect the first
+`plan` and `apply` to find more.
 
 Nothing here runs automatically. The deploy workflow is started by hand.
 
