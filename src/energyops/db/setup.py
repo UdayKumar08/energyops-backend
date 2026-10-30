@@ -51,6 +51,7 @@ def _first_run(url: str) -> None:
                 environment=environment,
                 admin_email=admin or None,
                 admin_name=os.environ.get("ENERGYOPS_FIRST_ADMIN_NAME", "Platform admin"),
+                admin_object_id=os.environ.get("ENERGYOPS_FIRST_ADMIN_OBJECT_ID"),
                 demo_customer_admin_email=demo or None,
             )
         finally:

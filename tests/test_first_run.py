@@ -32,6 +32,24 @@ async def test_first_admin_is_created_once_and_has_no_organisation(db: Database)
     assert user is not None and user.role == "platform_admin" and user.org_id is None
 
 
+async def test_the_object_id_is_recorded_once_and_is_what_sign_in_finds(db: Database) -> None:
+    oid = "ad192e78-8b3b-4096-b335-1bdbec6bde15"
+    for other in (oid, "11111111-1111-1111-1111-111111111111"):
+        await first_run(
+            db, environment=Environment.PROD, admin_email="a@example.com", admin_object_id=other
+        )
+    async with db.session(Scope.platform_wide()) as session:
+        user = await repo.find_user(session, external_id=oid)
+    assert user is not None and user.email == "a@example.com"  # the second id did not replace it
+
+
+async def test_a_bad_object_id_is_refused(db: Database) -> None:
+    with pytest.raises(FirstRunError, match="not a UUID"):
+        await first_run(
+            db, environment=Environment.PROD, admin_email="a@example.com", admin_object_id="nope"
+        )
+
+
 async def test_nothing_is_created_without_settings(db: Database) -> None:
     result = await first_run(db, environment=Environment.PROD, admin_email=None)
     assert not result.platform_admin_created and not result.demo_customer_created

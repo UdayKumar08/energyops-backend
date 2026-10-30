@@ -137,3 +137,9 @@ variable "demo_customer_admin_email" {
   default     = ""
   description = "When set (never in prod), the migrate job also creates an invented customer organisation with this person as its administrator."
 }
+
+variable "first_admin_object_id" {
+  type        = string
+  default     = ""
+  description = "The first platform admin's Microsoft Entra object id. Sign-in matches on it, so it works whatever address Microsoft puts in the token."
+}

@@ -54,6 +54,7 @@ jobs:
       TF_VAR_vault_admins: ${{ vars.VAULT_ADMIN_OBJECT_IDS || '[]' }}
       TF_VAR_budget_alert_emails: ${{ vars.BUDGET_ALERT_EMAILS || '[]' }}
       TF_VAR_first_admin_email: ${{ vars.FIRST_ADMIN_EMAIL }}
+      TF_VAR_first_admin_object_id: ${{ vars.FIRST_ADMIN_OBJECT_ID || fromJSON(vars.VAULT_ADMIN_OBJECT_IDS || '[""]')[0] }}
       TF_VAR_first_admin_name: ${{ vars.FIRST_ADMIN_NAME || 'Platform admin' }}
       TF_VAR_demo_customer_admin_email: ${{ vars.DEMO_CUSTOMER_ADMIN_EMAIL }}
       TF_VAR_budget_amount: ${{ vars.BUDGET_AMOUNT || '12000' }}
