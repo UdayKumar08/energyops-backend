@@ -184,3 +184,31 @@ def test_a_limited_server_administrator_can_run_it_twice(scratch) -> None:
             )
             conn.execute(sql.SQL("drop owned by {}").format(sql.Identifier(admin_role)))
             conn.execute(sql.SQL("drop role {}").format(sql.Identifier(admin_role)))
+
+
+def test_the_migrations_never_run_create_extension_when_it_is_already_there(scratch) -> None:
+    # Azure rejects every CREATE EXTENSION statement from roles outside its administrator group,
+    # even one that would do nothing. An event trigger recreates that refusal.
+    from energyops.db.setup import migrate
+
+    url, database, owner, app = scratch
+    bootstrap(url, owner_password="o" * 24, app_password="a" * 24, owner_role=owner, app_role=app)
+    with psycopg.connect(url, autocommit=True) as conn:
+        conn.execute(
+            """
+            create function eo_refuse_extension() returns event_trigger language plpgsql as $$
+            begin
+                if not (select rolsuper from pg_roles where rolname = current_user) then
+                    raise exception 'only administrators may use CREATE EXTENSION';
+                end if;
+            end $$
+            """
+        )
+        conn.execute(
+            "create event trigger eo_refuse on ddl_command_start "
+            "when tag in ('CREATE EXTENSION') execute function eo_refuse_extension()"
+        )
+    owner_url = _url(url, owner, "o" * 24).replace("postgresql://", "postgresql+psycopg://", 1)
+    migrate(owner_url)
+    with psycopg.connect(_url(url, owner, "o" * 24)) as conn:
+        assert conn.execute("select count(*) from agent_settings").fetchone() is not None

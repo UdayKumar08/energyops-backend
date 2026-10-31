@@ -96,8 +96,19 @@ def _security() -> None:
 
 def upgrade() -> None:
     # The pgvector extension is created by a privileged role before migrations run; this only
-    # checks it is there, because later migrations need it.
-    op.execute("create extension if not exists vector")
+    # creates it when it is missing (a local database). On Azure the server refuses the CREATE
+    # EXTENSION statement itself to anyone outside its administrator group, even with IF NOT
+    # EXISTS and even when the extension is already there, so the statement must not run then.
+    op.execute(
+        """
+        do $$
+        begin
+            if not exists (select 1 from pg_extension where extname = 'vector') then
+                create extension vector;
+            end if;
+        end $$
+        """
+    )
     op.create_table(
         "agent_settings",
         sa.Column("agent_id", sa.String(length=64), nullable=False),
