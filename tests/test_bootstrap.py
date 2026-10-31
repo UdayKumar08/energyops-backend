@@ -129,3 +129,15 @@ def test_an_unreachable_server_is_reported_without_the_password() -> None:
         )
     assert "supersecretvalue" not in str(info.value)
     assert "o" * 24 not in str(info.value)
+
+
+def test_the_owner_can_create_tables_where_the_public_schema_is_locked_down(scratch) -> None:
+    # Azure's Postgres gives the public schema to its administrator group and lets no one
+    # else create tables in it; this recreates that before running the bootstrap.
+    url, _, owner, app = scratch
+    with psycopg.connect(url, autocommit=True) as conn:
+        conn.execute("alter schema public owner to current_user")
+        conn.execute("revoke all on schema public from public")
+    bootstrap(url, owner_password="o" * 24, app_password="a" * 24, owner_role=owner, app_role=app)
+    with psycopg.connect(_url(url, owner, "o" * 24), autocommit=True) as conn:
+        conn.execute("create table t (id int)")
