@@ -49,11 +49,18 @@ def _set_role(
     conn: psycopg.Connection, role: str, password: str, *, create_db_owner: bool = False
 ) -> None:
     exists = conn.execute("select 1 from pg_roles where rolname = %s", (role,)).fetchone()
-    verb = "alter" if exists else "create"
+    if exists:
+        # Only the password changes on a repeat run. A server administrator that is not a
+        # superuser (Azure's) is refused an ALTER ROLE that restates attributes such as
+        # NOSUPERUSER, even when the role already has exactly those attributes.
+        conn.execute(
+            sql.SQL("alter role {} password {}").format(sql.Identifier(role), sql.Literal(password))
+        )
+        return
     conn.execute(
         sql.SQL(
-            "{} role {} login nosuperuser nocreatedb nocreaterole noinherit password {}"
-        ).format(sql.SQL(verb), sql.Identifier(role), sql.Literal(password))
+            "create role {} login nosuperuser nocreatedb nocreaterole noinherit password {}"
+        ).format(sql.Identifier(role), sql.Literal(password))
     )
 
 
