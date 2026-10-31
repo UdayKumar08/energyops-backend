@@ -141,3 +141,46 @@ def test_the_owner_can_create_tables_where_the_public_schema_is_locked_down(scra
     bootstrap(url, owner_password="o" * 24, app_password="a" * 24, owner_role=owner, app_role=app)
     with psycopg.connect(_url(url, owner, "o" * 24), autocommit=True) as conn:
         conn.execute("create table t (id int)")
+
+
+def test_a_limited_server_administrator_can_run_it_twice(scratch) -> None:
+    # Azure's server administrator can create roles and databases but is not a superuser, and
+    # PostgreSQL then refuses an ALTER ROLE that restates attributes such as NOSUPERUSER. The
+    # first run only creates the roles, so the failure appears on the second run.
+    url, database, owner, app = scratch
+    admin_role = f"eo_boot_admin_{secrets.token_hex(4)}"
+    with psycopg.connect(url, autocommit=True) as conn:
+        conn.execute("create extension if not exists vector")
+        conn.execute(
+            sql.SQL("create role {} login createrole createdb nosuperuser password {}").format(
+                sql.Identifier(admin_role), sql.Literal("x" * 24)
+            )
+        )
+        conn.execute(
+            sql.SQL("alter database {} owner to {}").format(
+                sql.Identifier(database), sql.Identifier(admin_role)
+            )
+        )
+    admin_url = _url(url, admin_role, "x" * 24)
+    try:
+        bootstrap(
+            admin_url,
+            owner_password="o" * 24,
+            app_password="a" * 24,
+            owner_role=owner,
+            app_role=app,
+        )
+        bootstrap(
+            admin_url,
+            owner_password="p" * 24,
+            app_password="b" * 24,
+            owner_role=owner,
+            app_role=app,
+        )
+    finally:
+        with psycopg.connect(url, autocommit=True) as conn:
+            conn.execute(
+                sql.SQL("alter database {} owner to current_user").format(sql.Identifier(database))
+            )
+            conn.execute(sql.SQL("drop owned by {}").format(sql.Identifier(admin_role)))
+            conn.execute(sql.SQL("drop role {}").format(sql.Identifier(admin_role)))
