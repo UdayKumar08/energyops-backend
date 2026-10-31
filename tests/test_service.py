@@ -66,6 +66,17 @@ async def test_a_garbage_or_expired_or_wrongly_signed_token_means_401(
         assert response.status_code == 401
 
 
+async def test_a_refused_token_is_logged_with_the_reason_but_not_the_token(
+    api: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    token = TOKENS.issue(ADMIN, minutes=-10)
+    with caplog.at_level("WARNING", logger="energyops.service.deps"):
+        response = await api.get("/me", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
+    assert "Sign-in refused" in caplog.text
+    assert token not in caplog.text
+
+
 async def test_a_valid_token_for_someone_never_added_means_403(api: httpx.AsyncClient) -> None:
     response = await api.get("/me", headers=as_user("ghost@nowhere.example"))
     assert response.status_code == 403

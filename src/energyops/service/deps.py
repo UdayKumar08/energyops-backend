@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Annotated
 
@@ -15,6 +16,7 @@ from energyops.security.tokens import TokenError
 from energyops.service.state import ServiceState
 
 _bearer = HTTPBearer(auto_error=False)
+log = logging.getLogger(__name__)
 
 
 def state_of(request: Request) -> ServiceState:
@@ -34,6 +36,9 @@ async def current_principal(
     try:
         claims = await state.verifier.verify(credentials.credentials)
     except TokenError as exc:
+        # The reason names a rule (wrong issuer, missing scope, old token version), never the
+        # token itself, and it is what an operator needs when sign-in is refused.
+        log.warning("Sign-in refused: %s", exc)
         raise HTTPException(
             status_code=401, detail=str(exc), headers={"WWW-Authenticate": "Bearer"}
         ) from None

@@ -28,7 +28,10 @@ must live in a private storage container and not in the repository.
 The Microsoft client secret is the same: create it in the vault first, under the name in the
 `entra_client_secret_name` variable (default `entra-client-secret`), before the `full` apply, because the
 web app reads it from there. After the apply, add the `entra_redirect_uri` output as a Web redirect
-URI on the app registration.
+URI on the app registration. The app registration also needs, under Expose an API, an Application ID
+URI of `api://<client id>` and a delegated scope named exactly `access_as_user`, and its manifest needs
+`requestedAccessTokenVersion` set to 2, because the API accepts only version 2 tokens and Entra issues
+version 1 tokens to an app that exposes its own API unless told otherwise.
 
 Model provider keys and the embeddings key are not created by Terraform and never pass through
 its state. A person creates each one in the vault first (`az keyvault secret set`), then names it
@@ -71,10 +74,10 @@ federated credential whose subject is `repo:OWNER@OWNER_ID/NAME@REPO_ID:environm
 
 ## Known gaps
 
-The Microsoft Entra sign-in is written and unit-tested but has never been run against Microsoft.
-The Terraform now passes the web app `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET`
-(from Key Vault) and `PUBLIC_URL`, but that has never been planned or applied. The API validates
-Entra tokens (tested with generated keys and a local key server only).
+The Microsoft Entra sign-in has been run once in a browser against a real tenant: a sign-in as the
+first platform admin reached the admin console. It has not been run for a customer user, with
+a second tenant, or after the client secret expires (the secret has a fixed lifetime and nothing
+reminds anyone to renew it). The API validates Entra tokens against the tenant's published keys.
 
 A monthly budget with email alerts is defined (when `budget_alert_emails` is set); no other alerts or dashboards are. The Key Vault accepts public network access
 (protected by role-based access) so that the deploy job can write to it. The Dockerfiles have not
