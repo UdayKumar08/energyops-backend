@@ -83,6 +83,13 @@ def bootstrap(
                 sql.SQL("alter database {} owner to {}").format(db, sql.Identifier(owner_role))
             )
             conn.execute(sql.SQL("revoke all on database {} from public").format(db))
+            # On Azure the public schema belongs to the server's administrator group and nobody
+            # else may create tables in it, so the owner role is given that explicitly.
+            conn.execute(
+                sql.SQL("grant usage, create on schema public to {}").format(
+                    sql.Identifier(owner_role)
+                )
+            )
             conn.execute(
                 sql.SQL("grant connect on database {} to {}").format(db, sql.Identifier(app_role))
             )
