@@ -30,6 +30,7 @@ export function navFor(me: Pick<Me, "permissions" | "role">): NavGroup[] {
     operate.push({ href: "/savings", label: "Savings", keepSite: true });
   }
   if (can("view_data")) operate.push({ href: "/tickets", label: "Tickets", keepSite: false });
+  if (can("view_runs")) operate.push({ href: "/runs", label: "Run history", keepSite: false });
   if (operate.length) groups.push({ title: "Operate", items: operate });
 
   const data: NavItem[] = [];

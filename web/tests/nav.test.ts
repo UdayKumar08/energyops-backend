@@ -6,7 +6,7 @@ const labels = (permissions: string[]) =>
 
 describe("navFor", () => {
   it("gives a viewer only the read-only pages", () => {
-    expect(labels(["view_data", "view_runs"])).toEqual(["Overview", "Forecast", "Tickets", "Knowledge"]);
+    expect(labels(["view_data", "view_runs"])).toEqual(["Overview", "Forecast", "Tickets", "Run history", "Knowledge"]);
   });
   it("adds the assistant and agent pages for roles that may run agents", () => {
     const items = labels(["view_data", "run_agents", "ask_assistant"]);

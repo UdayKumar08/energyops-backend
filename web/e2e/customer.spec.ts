@@ -216,3 +216,32 @@ test("without speech support the page says so and offers typing", async ({ page 
   await expect(page.getByText("Voice input is not available in this browser. Type your question.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Speak" })).toHaveCount(0);
 });
+
+test("run history lists a finished run and opens it again", async ({ page }) => {
+  await signIn(page, HARBOUR_MANAGER);
+  await page.getByRole("link", { name: "Assistant" }).click();
+  await page.getByLabel("Your question").fill("How much could we save on our energy bill?");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(page.getByText("Sent to")).toBeVisible();
+
+  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Run history" }).click();
+  await expect(page.getByRole("heading", { name: "Run history", level: 1 })).toBeVisible();
+  const rows = page.getByRole("table").getByRole("row");
+  await expect(rows.nth(1)).toContainText("Savings Advisor");
+
+  await page.getByLabel("Result").selectOption("failed");
+  await page.getByRole("button", { name: "Apply filters" }).click();
+  await expect(page).toHaveURL(/status=failed/);
+  await expect(page.getByText("No runs match these filters")).toBeVisible();
+  await page.getByRole("link", { name: "Clear filters" }).click();
+
+  await page.getByRole("link", { name: /^Open/ }).first().click();
+  await expect(page.getByRole("heading", { name: /Savings Advisor/, level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Answer" })).toBeVisible();
+});
+
+test("an unknown run says it is not found", async ({ page }) => {
+  await signIn(page, HARBOUR_MANAGER);
+  await page.goto("/runs/00000000-0000-4000-8000-000000000000");
+  await expect(page.getByText("Not found")).toBeVisible();
+});
